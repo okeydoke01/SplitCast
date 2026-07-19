@@ -3,7 +3,7 @@
 ![SplitCast CI](https://github.com/vidit/RiseInJ19/workflows/SplitCast%20CI/badge.svg)
 ![Stellar Testnet](https://img.shields.io/badge/Stellar-Testnet-blue)
 
-*   **Live Demo (Localhost):** [http://localhost:3000](http://localhost:3000)
+*   **Live Demo:** [https://splitcast.pages.dev](https://splitcast.pages.dev)
 *   **Demo Video (1–2 min):** `PENDING (Manual record required by user)`
 
 ---
