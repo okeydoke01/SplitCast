@@ -4,3 +4,8 @@ members = [
     "contracts/split_registry",
     "contracts/splitter",
 ]
+
+[profile.release]
+opt-level = "z"
+overflow-checks = true
+
