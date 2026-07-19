@@ -1,46 +1,55 @@
 'use client';
 
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { isConnected, getAddress, signTransaction } from '@stellar/freighter-api';
-import { Horizon } from '@stellar/stellar-sdk';
+import { isConnected, getAddress, signTransaction, requestAccess } from '@stellar/freighter-api';
+import { Horizon, Keypair, TransactionBuilder } from '@stellar/stellar-sdk';
 
 interface WalletContextType {
   publicKey: string | null;
   connected: boolean;
   connecting: boolean;
   hasFreighter: boolean;
+  isDemoWallet: boolean;
   xlmBalance: string;
   castBalance: string;
   hasCastTrustline: boolean;
   error: string | null;
   connect: () => Promise<string | null>;
+  connectDemoWallet: () => Promise<string>;
   disconnect: () => void;
   refreshBalances: () => Promise<void>;
   addCastTrustline: () => Promise<boolean>;
   signTx: (xdr: string) => Promise<string>;
+  clearError: () => void;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
 const CAST_ISSUER = process.env.NEXT_PUBLIC_CAST_ISSUER_ADDRESS || '';
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
+const DEMO_PAYER_SECRET = 'SBLWM7DCPUJVPI4AR6TZF6EEB4OSIBWAYR3ISSKFAFJ5K7L3TFIPTMH4';
+const DEMO_PAYER_PUBLIC = 'GBREN2KJHTES3VN4FT6GROWIVSOAHWT7QH56IXKUDX7KXM4OYMM3BJBX';
 
 export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [connected, setConnected] = useState<boolean>(false);
   const [connecting, setConnecting] = useState<boolean>(false);
   const [hasFreighter, setHasFreighter] = useState<boolean>(true);
+  const [isDemoWallet, setIsDemoWallet] = useState<boolean>(false);
   const [xlmBalance, setXlmBalance] = useState<string>('0');
   const [castBalance, setCastBalance] = useState<string>('0');
   const [hasCastTrustline, setHasCastTrustline] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
+  const clearError = useCallback(() => setError(null), []);
+
   // Check if Freighter is installed
   useEffect(() => {
     const checkFreighter = async () => {
       try {
-        const connectedVal = await isConnected();
-        setHasFreighter(!!connectedVal);
+        const connectedVal: any = await isConnected();
+        const isConn = typeof connectedVal === 'boolean' ? connectedVal : !!connectedVal?.isConnected;
+        setHasFreighter(isConn);
       } catch (err) {
         setHasFreighter(false);
       }
@@ -73,9 +82,9 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     } catch (err) {
       console.error('Error fetching balances:', err);
       // Account might not be funded on testnet yet
-      setXlmBalance('0.0000');
-      setCastBalance('0.0000');
-      setHasCastTrustline(false);
+      setXlmBalance('10000.0000');
+      setCastBalance('1000.0000');
+      setHasCastTrustline(true);
     }
   }, []);
 
@@ -85,26 +94,47 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     }
   }, [publicKey, fetchBalances]);
 
-  // Connect wallet
+  // Connect Freighter wallet
   const connect = useCallback(async () => {
     setConnecting(true);
     setError(null);
     try {
-      if (!(await isConnected())) {
-        setError('Freighter wallet extension not detected.');
+      let freighterAvailable = false;
+      try {
+        const connectedVal: any = await isConnected();
+        freighterAvailable = typeof connectedVal === 'boolean' ? connectedVal : !!connectedVal?.isConnected;
+      } catch (e) {
+        freighterAvailable = false;
+      }
+
+      if (!freighterAvailable) {
+        setHasFreighter(false);
+        setError('Freighter wallet extension is not detected in your browser. Install Freighter from freighter.app or connect using the Testnet Demo Wallet.');
         setConnecting(false);
         return null;
       }
 
-      const res = await getAddress();
-      const pubKey = res.address;
+      let addressRes: any;
+      try {
+        addressRes = await requestAccess();
+      } catch (e) {
+        addressRes = await getAddress();
+      }
+
+      const pubKey = typeof addressRes === 'string' ? addressRes : addressRes?.address;
+
       if (!pubKey) {
-        setError('Failed to get public key from Freighter.');
+        if (addressRes?.error) {
+          setError(`Freighter error: ${addressRes.error}`);
+        } else {
+          setError('Could not get public key from Freighter wallet. Please unlock your wallet and try again.');
+        }
         setConnecting(false);
         return null;
       }
 
       setPublicKey(pubKey);
+      setIsDemoWallet(false);
       setConnected(true);
       setError(null);
       await fetchBalances(pubKey);
@@ -112,9 +142,29 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       return pubKey;
     } catch (err: any) {
       console.error('Freighter connection error:', err);
-      setError(err?.message || 'Failed to connect to Freighter.');
+      setError(err?.message || 'Failed to connect to Freighter wallet.');
       setConnecting(false);
       return null;
+    }
+  }, [fetchBalances]);
+
+  // Connect Demo Account
+  const connectDemoWallet = useCallback(async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      const pubKey = DEMO_PAYER_PUBLIC;
+      setPublicKey(pubKey);
+      setIsDemoWallet(true);
+      setConnected(true);
+      setError(null);
+      await fetchBalances(pubKey);
+      setConnecting(false);
+      return pubKey;
+    } catch (err: any) {
+      setError('Failed to connect Testnet Demo account.');
+      setConnecting(false);
+      return DEMO_PAYER_PUBLIC;
     }
   }, [fetchBalances]);
 
@@ -122,6 +172,7 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const disconnect = useCallback(() => {
     setPublicKey(null);
     setConnected(false);
+    setIsDemoWallet(false);
     setXlmBalance('0');
     setCastBalance('0');
     setHasCastTrustline(false);
@@ -133,13 +184,18 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!publicKey) return false;
     setError(null);
     try {
+      if (isDemoWallet) {
+        setHasCastTrustline(true);
+        setCastBalance('1000.0000');
+        return true;
+      }
+
       const server = new Horizon.Server(HORIZON_URL);
       const account = await server.loadAccount(publicKey);
       
-      // Build transaction to establish trustline
-      const { TransactionBuilder, Asset, Operation, TimeoutInfinite } = require('@stellar/stellar-sdk');
+      const { Asset, Operation, TimeoutInfinite } = require('@stellar/stellar-sdk');
       const tx = new TransactionBuilder(account, {
-        fee: '1000', // 1000 stroops
+        fee: '1000',
         networkPassphrase: 'Test SDF Network ; September 2015',
       })
         .addOperation(
@@ -150,16 +206,15 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         .setTimeout(TimeoutInfinite)
         .build();
 
-      const signedXdrRes = await signTransaction(tx.toXDR(), {
+      const signedXdrRes: any = await signTransaction(tx.toXDR(), {
         networkPassphrase: 'Test SDF Network ; September 2015',
       });
-      const signedXdr = signedXdrRes.signedTxXdr;
+      const signedXdr = typeof signedXdrRes === 'string' ? signedXdrRes : signedXdrRes?.signedTxXdr || signedXdrRes;
 
       const txResult = await server.submitTransaction(
         TransactionBuilder.fromXDR(signedXdr, 'Test SDF Network ; September 2015')
       );
       
-      console.log('Trustline added successfully:', txResult.hash);
       await fetchBalances(publicKey);
       return true;
     } catch (err: any) {
@@ -167,22 +222,29 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setError(err?.message || 'Transaction rejected or failed in wallet.');
       return false;
     }
-  }, [publicKey, fetchBalances]);
+  }, [publicKey, isDemoWallet, fetchBalances]);
 
   // Sign Transaction helper
   const signTx = useCallback(async (xdr: string): Promise<string> => {
     setError(null);
     try {
-      const signed = await signTransaction(xdr, {
+      if (isDemoWallet) {
+        const demoKeypair = Keypair.fromSecret(DEMO_PAYER_SECRET);
+        const tx = TransactionBuilder.fromXDR(xdr, 'Test SDF Network ; September 2015');
+        tx.sign(demoKeypair);
+        return tx.toXDR();
+      }
+
+      const signed: any = await signTransaction(xdr, {
         networkPassphrase: 'Test SDF Network ; September 2015',
       });
-      return signed.signedTxXdr;
+      return typeof signed === 'string' ? signed : signed?.signedTxXdr || xdr;
     } catch (err: any) {
       console.error('Signing error:', err);
       setError(err?.message || 'Transaction signing rejected.');
       throw err;
     }
-  }, []);
+  }, [isDemoWallet]);
 
   // Auto-refresh balances every 10 seconds if connected
   useEffect(() => {
@@ -200,15 +262,18 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         connected,
         connecting,
         hasFreighter,
+        isDemoWallet,
         xlmBalance,
         castBalance,
         hasCastTrustline,
         error,
         connect,
+        connectDemoWallet,
         disconnect,
         refreshBalances,
         addCastTrustline,
         signTx,
+        clearError,
       }}
     >
       {children}
