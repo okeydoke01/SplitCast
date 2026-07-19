@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Horizon, TransactionBuilder, Asset, Operation, Keypair, TimeoutInfinite } from '@stellar/stellar-sdk';
+import { Account, TransactionBuilder, Asset, Operation, Keypair, TimeoutInfinite } from '@stellar/stellar-sdk';
 
 export const runtime = 'edge';
 
@@ -9,52 +9,96 @@ const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 
 export async function POST(request: Request) {
   try {
-    const { destination, castAmount } = await request.json();
+    const { destination, mode, amount } = await request.json();
 
-    if (!destination || !castAmount || isNaN(parseFloat(castAmount)) || parseFloat(castAmount) <= 0) {
+    if (!destination || !amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       return NextResponse.json(
-        { error: 'Invalid destination wallet address or swap amount' },
+        { error: 'Invalid destination wallet address or amount' },
         { status: 400 }
       );
     }
 
-    const server = new Horizon.Server(HORIZON_URL);
     const issuerKeypair = Keypair.fromSecret(CAST_ISSUER_SECRET);
-    const issuerAccount = await server.loadAccount(issuerKeypair.publicKey());
+    
+    // Load issuer account sequence via REST
+    const accRes = await fetch(`${HORIZON_URL}/accounts/${issuerKeypair.publicKey()}`);
+    if (!accRes.ok) {
+      return NextResponse.json(
+        { error: 'Failed to query issuer account sequence from Stellar Horizon' },
+        { status: 500 }
+      );
+    }
+    const accData = await accRes.json();
+    const account = new Account(accData.account_id, accData.sequence);
 
-    const castAsset = new Asset('CAST', CAST_ISSUER_PUBLIC);
-    const amountStr = parseFloat(castAmount).toFixed(7);
+    const isXlmToCast = mode !== 'CAST_TO_XLM';
+    const numAmount = parseFloat(amount);
 
-    const tx = new TransactionBuilder(issuerAccount, {
+    let paymentOp;
+    let receiveStr;
+
+    if (isXlmToCast) {
+      // Swap XLM -> CAST (Rate: 1 XLM = 10 CAST)
+      const castAmount = (numAmount * 10).toFixed(7);
+      const castAsset = new Asset('CAST', CAST_ISSUER_PUBLIC);
+      paymentOp = Operation.payment({
+        destination: destination,
+        asset: castAsset,
+        amount: castAmount,
+      });
+      receiveStr = `${(numAmount * 10).toFixed(2)} CAST`;
+    } else {
+      // Swap CAST -> XLM (Rate: 10 CAST = 1 XLM)
+      const xlmAmount = (numAmount / 10).toFixed(7);
+      paymentOp = Operation.payment({
+        destination: destination,
+        asset: Asset.native(),
+        amount: xlmAmount,
+      });
+      receiveStr = `${(numAmount / 10).toFixed(2)} XLM`;
+    }
+
+    const tx = new TransactionBuilder(account, {
       fee: '10000',
       networkPassphrase: 'Test SDF Network ; September 2015',
     })
-      .addOperation(
-        Operation.payment({
-          destination: destination,
-          asset: castAsset,
-          amount: amountStr,
-        })
-      )
+      .addOperation(paymentOp)
       .setTimeout(TimeoutInfinite)
       .build();
 
     tx.sign(issuerKeypair);
-    const result = await server.submitTransaction(tx);
+    const xdr = tx.toXDR();
+
+    // Submit XDR directly to Horizon REST endpoint
+    const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `tx=${encodeURIComponent(xdr)}`,
+    });
+
+    const submitJson = await submitRes.json();
+
+    if (!submitRes.ok || !submitJson.successful) {
+      console.error('Horizon Transaction Submit Error:', submitJson);
+      let errorMessage = 'Stellar Testnet swap transaction failed.';
+      const opCodes = submitJson?.extras?.result_codes?.operations;
+      if (opCodes?.includes('op_no_trust')) {
+        errorMessage = 'Your account must establish the CAST trustline before receiving CAST. Click "1-Click Add CAST Trustline".';
+      } else if (submitJson?.title) {
+        errorMessage = `Stellar error: ${submitJson.title}`;
+      }
+      return NextResponse.json({ error: errorMessage }, { status: 400 });
+    }
 
     return NextResponse.json({
       success: true,
-      hash: result.hash,
-      amountSent: amountStr,
+      hash: submitJson.hash,
+      receiveStr: receiveStr,
     });
   } catch (err: any) {
     console.error('Swap API Error:', err);
-    let errorMessage = err?.message || 'Failed to process token swap transaction';
-    if (err?.response?.data?.extras?.result_codes?.operations?.includes('op_no_trust')) {
-      errorMessage = 'Recipient account does not have a CAST trustline yet. Please click "Add CAST Trustline" first.';
-    }
     return NextResponse.json(
-      { error: errorMessage },
+      { error: err?.message || 'Failed to process token swap transaction' },
       { status: 500 }
     );
   }

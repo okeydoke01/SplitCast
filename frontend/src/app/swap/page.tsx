@@ -29,21 +29,35 @@ export default function SwapPage() {
     refreshBalances 
   } = useWallet();
 
-  const [xlmAmount, setXlmAmount] = useState<string>('10');
+  const [direction, setDirection] = useState<'XLM_TO_CAST' | 'CAST_TO_XLM'>('XLM_TO_CAST');
+  const [payAmount, setPayAmount] = useState<string>('10');
   const [swapping, setSwapping] = useState<boolean>(false);
   const [addingTrustline, setAddingTrustline] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successHash, setSuccessHash] = useState<string | null>(null);
+  const [receivedSummary, setReceivedSummary] = useState<string>('');
 
-  // Conversion Rate: 1 XLM = 10 CAST
-  const CONVERSION_RATE = 10;
-  const castReceived = (parseFloat(xlmAmount) || 0) * CONVERSION_RATE;
+  const isXlmToCast = direction === 'XLM_TO_CAST';
+
+  // Conversion rates: 1 XLM = 10 CAST
+  const numInput = parseFloat(payAmount) || 0;
+  const calculatedOutput = isXlmToCast ? numInput * 10 : numInput / 10;
+
+  const handleToggleDirection = () => {
+    setDirection(prev => prev === 'XLM_TO_CAST' ? 'CAST_TO_XLM' : 'XLM_TO_CAST');
+    setErrorMsg(null);
+    setSuccessHash(null);
+  };
 
   const handleMaxClick = () => {
-    const balance = parseFloat(xlmBalance);
-    // Leave 1 XLM for gas fees
-    const maxUsable = Math.max(0, balance - 1);
-    setXlmAmount(maxUsable.toFixed(2));
+    if (isXlmToCast) {
+      const balance = parseFloat(xlmBalance);
+      const maxUsable = Math.max(0, balance - 1);
+      setPayAmount(maxUsable.toFixed(2));
+    } else {
+      const balance = parseFloat(castBalance);
+      setPayAmount(balance.toFixed(2));
+    }
   };
 
   const handleTrustlineAction = async () => {
@@ -71,18 +85,20 @@ export default function SwapPage() {
       return;
     }
 
-    const numXlm = parseFloat(xlmAmount);
-    if (isNaN(numXlm) || numXlm <= 0) {
-      setErrorMsg('Please enter a valid amount of XLM to swap.');
+    if (isNaN(numInput) || numInput <= 0) {
+      setErrorMsg('Please enter a valid swap amount.');
       return;
     }
 
-    if (numXlm > parseFloat(xlmBalance)) {
-      setErrorMsg(`Insufficient XLM balance. You have ${xlmBalance} XLM available.`);
+    const currentBalance = isXlmToCast ? parseFloat(xlmBalance) : parseFloat(castBalance);
+    const assetName = isXlmToCast ? 'XLM' : 'CAST';
+
+    if (numInput > currentBalance) {
+      setErrorMsg(`Insufficient ${assetName} balance. You have ${currentBalance.toFixed(2)} ${assetName} available.`);
       return;
     }
 
-    if (!hasCastTrustline) {
+    if (isXlmToCast && !hasCastTrustline) {
       setErrorMsg('You need to establish a CAST trustline before receiving CAST tokens.');
       return;
     }
@@ -95,7 +111,8 @@ export default function SwapPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           destination: publicKey,
-          castAmount: castReceived.toString(),
+          mode: direction,
+          amount: payAmount,
         }),
       });
 
@@ -106,6 +123,7 @@ export default function SwapPage() {
       }
 
       setSuccessHash(data.hash);
+      setReceivedSummary(data.receiveStr || `${calculatedOutput.toFixed(2)} ${isXlmToCast ? 'CAST' : 'XLM'}`);
       await refreshBalances();
     } catch (err: any) {
       console.error('Swap execution error:', err);
@@ -128,16 +146,16 @@ export default function SwapPage() {
               <span className="text-xs font-semibold text-accent-primary tracking-wide uppercase">Instant Testnet Faucet Swap</span>
             </div>
             <h1 className="text-3xl sm:text-4xl font-bold font-space-grotesk text-text-primary tracking-tight">
-              Swap XLM to CAST
+              {isXlmToCast ? 'Swap XLM to CAST' : 'Swap CAST to XLM'}
             </h1>
             <p className="mt-2 text-sm text-text-secondary">
-              Convert your Stellar Testnet XLM directly into <span className="font-semibold text-text-primary">CAST</span> tokens to fund payment routes & splits.
+              Convert between <span className="font-semibold text-text-primary">XLM</span> and <span className="font-semibold text-text-primary">CAST</span> instantly on Stellar Testnet.
             </p>
           </div>
 
           {/* Swap Card */}
           <div className="bg-bg-surface border border-border-subtle rounded-2xl p-6 sm:p-8 shadow-2xl backdrop-blur-xl relative overflow-hidden">
-            {/* Subtle Ambient Background Blur */}
+            {/* Ambient Background Glow */}
             <div className="absolute -top-24 -right-24 w-48 h-48 bg-accent-primary/10 rounded-full blur-3xl pointer-events-none" />
             <div className="absolute -bottom-24 -left-24 w-48 h-48 bg-accent-secondary/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -168,14 +186,14 @@ export default function SwapPage() {
             )}
 
             <form onSubmit={handleSwap} className="space-y-5">
-              {/* From Token (XLM) */}
+              {/* You Pay Section */}
               <div className="bg-bg-primary/60 border border-border-subtle rounded-xl p-4 transition-all focus-within:border-accent-primary/50">
                 <div className="flex justify-between items-center text-xs text-text-secondary mb-2">
                   <span className="font-medium">You Pay</span>
                   {connected && (
                     <span className="flex items-center gap-1">
                       <Wallet className="w-3 h-3 text-text-muted" />
-                      Balance: <strong className="text-text-primary font-mono">{xlmBalance} XLM</strong>
+                      Balance: <strong className="text-text-primary font-mono">{isXlmToCast ? xlmBalance : castBalance} {isXlmToCast ? 'XLM' : 'CAST'}</strong>
                     </span>
                   )}
                 </div>
@@ -184,8 +202,8 @@ export default function SwapPage() {
                     type="number"
                     step="any"
                     min="0.1"
-                    value={xlmAmount}
-                    onChange={(e) => setXlmAmount(e.target.value)}
+                    value={payAmount}
+                    onChange={(e) => setPayAmount(e.target.value)}
                     placeholder="0.00"
                     className="w-full bg-transparent text-2xl font-bold font-mono text-text-primary focus:outline-none placeholder-text-muted/40"
                     required
@@ -201,28 +219,33 @@ export default function SwapPage() {
                   )}
                   <div className="flex items-center gap-2 bg-bg-surface border border-border-subtle px-3 py-2 rounded-xl shrink-0">
                     <div className="w-6 h-6 rounded-full bg-accent-secondary/20 flex items-center justify-center text-accent-secondary font-bold text-[10px]">
-                      XLM
+                      {isXlmToCast ? 'XLM' : 'CAST'}
                     </div>
-                    <span className="font-semibold text-sm text-text-primary">XLM</span>
+                    <span className="font-semibold text-sm text-text-primary">{isXlmToCast ? 'XLM' : 'CAST'}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Swap Divider Button */}
+              {/* Interactive Direction Toggle Button (Two Arrows) */}
               <div className="flex justify-center -my-2 relative z-10">
-                <div className="p-2 bg-bg-surface border border-border-subtle rounded-full text-text-secondary shadow-md hover:border-accent-primary/50 transition-colors">
-                  <ArrowUpDown className="w-4 h-4 text-accent-primary" />
-                </div>
+                <button
+                  type="button"
+                  onClick={handleToggleDirection}
+                  title="Click to toggle swap direction"
+                  className="p-2.5 bg-bg-surface border border-border-subtle hover:border-accent-primary rounded-full text-accent-primary shadow-lg hover:bg-accent-primary/10 transition-all cursor-pointer transform hover:scale-110 active:scale-95 group"
+                >
+                  <ArrowUpDown className="w-5 h-5 group-hover:rotate-180 transition-transform duration-300" />
+                </button>
               </div>
 
-              {/* To Token (CAST) */}
+              {/* You Receive Section */}
               <div className="bg-bg-primary/60 border border-border-subtle rounded-xl p-4 transition-all">
                 <div className="flex justify-between items-center text-xs text-text-secondary mb-2">
                   <span className="font-medium">You Receive (Estimated)</span>
                   {connected && (
                     <span className="flex items-center gap-1">
                       <Coins className="w-3 h-3 text-text-muted" />
-                      Balance: <strong className="text-text-primary font-mono">{castBalance} CAST</strong>
+                      Balance: <strong className="text-text-primary font-mono">{isXlmToCast ? castBalance : xlmBalance} {isXlmToCast ? 'CAST' : 'XLM'}</strong>
                     </span>
                   )}
                 </div>
@@ -230,14 +253,14 @@ export default function SwapPage() {
                   <input
                     type="text"
                     readOnly
-                    value={castReceived.toFixed(2)}
+                    value={calculatedOutput.toFixed(2)}
                     className="w-full bg-transparent text-2xl font-bold font-mono text-accent-primary focus:outline-none cursor-default"
                   />
                   <div className="flex items-center gap-2 bg-bg-surface border border-border-subtle px-3 py-2 rounded-xl shrink-0">
                     <div className="w-6 h-6 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary font-bold text-[10px]">
-                      CAST
+                      {isXlmToCast ? 'CAST' : 'XLM'}
                     </div>
-                    <span className="font-semibold text-sm text-text-primary">CAST</span>
+                    <span className="font-semibold text-sm text-text-primary">{isXlmToCast ? 'CAST' : 'XLM'}</span>
                   </div>
                 </div>
               </div>
@@ -246,7 +269,9 @@ export default function SwapPage() {
               <div className="bg-bg-primary/40 rounded-xl p-3.5 border border-border-subtle/50 space-y-2 text-xs">
                 <div className="flex justify-between text-text-secondary">
                   <span>Exchange Rate</span>
-                  <span className="font-medium text-text-primary font-mono">1 XLM = 10 CAST</span>
+                  <span className="font-medium text-text-primary font-mono">
+                    {isXlmToCast ? '1 XLM = 10 CAST' : '10 CAST = 1 XLM'}
+                  </span>
                 </div>
                 <div className="flex justify-between text-text-secondary">
                   <span>Slippage Tolerance</span>
@@ -274,7 +299,7 @@ export default function SwapPage() {
                     <span>Swap Executed Successfully!</span>
                   </div>
                   <p className="text-text-secondary text-[11px]">
-                    Transferred <strong className="text-white">{castReceived.toFixed(2)} CAST</strong> tokens to your wallet.
+                    Received <strong className="text-white">{receivedSummary}</strong> in your wallet.
                   </p>
                   <a
                     href={`https://stellar.expert/explorer/testnet/tx/${successHash}`}
@@ -300,7 +325,7 @@ export default function SwapPage() {
               ) : (
                 <button
                   type="submit"
-                  disabled={swapping || !hasCastTrustline || parseFloat(xlmAmount) <= 0}
+                  disabled={swapping || (isXlmToCast && !hasCastTrustline) || numInput <= 0}
                   className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 disabled:opacity-50 text-white font-semibold py-3.5 rounded-xl transition-all cursor-pointer shadow-lg shadow-accent-primary/20"
                 >
                   {swapping ? (
@@ -311,7 +336,7 @@ export default function SwapPage() {
                   ) : (
                     <>
                       <RefreshCw className="w-4 h-4" />
-                      <span>Convert {xlmAmount || '0'} XLM to {castReceived.toFixed(2)} CAST</span>
+                      <span>Convert {payAmount || '0'} {isXlmToCast ? 'XLM' : 'CAST'} to {calculatedOutput.toFixed(2)} {isXlmToCast ? 'CAST' : 'XLM'}</span>
                     </>
                   )}
                 </button>
