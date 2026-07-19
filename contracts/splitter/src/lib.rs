@@ -1,5 +1,8 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Symbol, Env, Address, Vec, panic_with_error, Val, IntoVal};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, IntoVal,
+    Symbol, Val, Vec,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -49,11 +52,16 @@ impl Splitter {
             panic_with_error!(env, Error::InvalidAmount);
         }
 
-        let registry: Address = env.storage().instance().get(&DataKey::Registry).expect("registry not configured");
+        let registry: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Registry)
+            .expect("registry not configured");
 
         // Invoke Split Registry to get split configuration
         let args: Vec<Val> = soroban_sdk::vec![&env, split_id.into_val(&env)];
-        let config: SplitConfig = env.invoke_contract(&registry, &Symbol::new(&env, "get_split"), args);
+        let config: SplitConfig =
+            env.invoke_contract(&registry, &Symbol::new(&env, "get_split"), args);
 
         let n = config.recipients.len();
         if n == 0 {

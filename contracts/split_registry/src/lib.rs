@@ -1,5 +1,8 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, contracterror, Symbol, Env, Address, Vec, panic_with_error};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, Address, Env, Symbol,
+    Vec,
+};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -76,7 +79,9 @@ impl SplitRegistry {
             shares_bps,
         };
 
-        env.storage().persistent().set(&DataKey::Split(counter), &config);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Split(counter), &config);
 
         // Store split in owner's list
         let mut owner_splits: Vec<u64> = env
@@ -85,7 +90,9 @@ impl SplitRegistry {
             .get(&DataKey::OwnerSplits(owner.clone()))
             .unwrap_or(Vec::new(&env));
         owner_splits.push_back(counter);
-        env.storage().persistent().set(&DataKey::OwnerSplits(owner), &owner_splits);
+        env.storage()
+            .persistent()
+            .set(&DataKey::OwnerSplits(owner), &owner_splits);
 
         counter
     }
