@@ -412,7 +412,7 @@ export default function SwapPage() {
                   ) : (
                     <>
                       <RefreshCw className="w-4 h-4" />
-                      <span>Convert {payAmount || '0'} {isXlmToCast ? 'XLM' : 'CAST'} to {calculatedOutput.toFixed(2)} {isXlmToCast ? 'CAST' : 'XLM'}</span>
+                      <span>Convert</span>
                     </>
                   )}
                 </button>
