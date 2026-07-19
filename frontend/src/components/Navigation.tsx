@@ -4,7 +4,7 @@ import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useWallet } from '@/context/WalletContext';
-import { Home, PlusSquare, CreditCard, LayoutDashboard, Wallet, LogOut, Loader2, AlertCircle } from 'lucide-react';
+import { Home, PlusSquare, CreditCard, Repeat, LayoutDashboard, Wallet, LogOut, Loader2, AlertCircle } from 'lucide-react';
 
 export const Navigation: React.FC = () => {
   const pathname = usePathname();
@@ -14,6 +14,7 @@ export const Navigation: React.FC = () => {
     { name: 'Home', href: '/', icon: Home },
     { name: 'Create', href: '/create', icon: PlusSquare },
     { name: 'Pay', href: '/pay', icon: CreditCard },
+    { name: 'Swap', href: '/swap', icon: Repeat },
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   ];
 
