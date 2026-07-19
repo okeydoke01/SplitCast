@@ -200,8 +200,8 @@ export default function SwapPage() {
                     </button>
                   )}
                   <div className="flex items-center gap-2 bg-bg-surface border border-border-subtle px-3 py-2 rounded-xl shrink-0">
-                    <div className="w-6 h-6 rounded-full bg-accent-secondary/20 flex items-center justify-center text-accent-secondary font-bold text-xs">
-                      🚀
+                    <div className="w-6 h-6 rounded-full bg-accent-secondary/20 flex items-center justify-center text-accent-secondary font-bold text-[10px]">
+                      XLM
                     </div>
                     <span className="font-semibold text-sm text-text-primary">XLM</span>
                   </div>
@@ -234,8 +234,8 @@ export default function SwapPage() {
                     className="w-full bg-transparent text-2xl font-bold font-mono text-accent-primary focus:outline-none cursor-default"
                   />
                   <div className="flex items-center gap-2 bg-bg-surface border border-border-subtle px-3 py-2 rounded-xl shrink-0">
-                    <div className="w-6 h-6 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary font-bold text-xs">
-                      ⚡
+                    <div className="w-6 h-6 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary font-bold text-[10px]">
+                      CAST
                     </div>
                     <span className="font-semibold text-sm text-text-primary">CAST</span>
                   </div>
