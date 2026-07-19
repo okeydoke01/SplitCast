@@ -44,13 +44,40 @@ jobs:
       - name: Compile Contracts (WASM target)
         run: cargo build --target wasm32-unknown-unknown --release
 
-  deploy-vercel:
-    name: Deploy preview to Vercel
+  deploy-cloudflare:
+    name: Deploy to Cloudflare Pages
     runs-on: ubuntu-latest
-    if: false  # Force this job to skip, exactly as shown in the validation checks screenshot
+    needs: [build-frontend]
+    # Only run deploy on pushes to main/master branches, not on pull requests
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
     steps:
-      - name: Skip Deploy
-        run: echo "Skipped deploy as requested."
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+        working-directory: frontend
+
+      - name: Build Next.js with edge compatibility
+        run: npx @cloudflare/next-on-pages
+        working-directory: frontend
+
+      - name: Publish to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        continue-on-error: true
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: splitcast
+          directory: frontend/.vercel/output
+          branch: main
 
   lint-frontend:
     name: Lint + typecheck frontend
