@@ -1,7 +1,8 @@
 #![cfg(test)]
+#![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Env, Vec, Symbol};
+use soroban_sdk::{testutils::Address as _, Env, Symbol, Vec};
 
 #[test]
 fn test_initialize() {
@@ -47,7 +48,12 @@ fn test_create_and_get_split() {
     let recipients = Vec::from_array(&env, [r1.clone(), r2.clone()]);
     let shares = Vec::from_array(&env, [6000, 4000]);
 
-    let split_id = client.create_split(&owner, &Symbol::new(&env, "album_split"), &recipients, &shares);
+    let split_id = client.create_split(
+        &owner,
+        &Symbol::new(&env, "album_split"),
+        &recipients,
+        &shares,
+    );
     assert_eq!(split_id, 1);
 
     let config = client.get_split(&split_id);
@@ -82,7 +88,12 @@ fn test_create_split_invalid_shares() {
 
     // Sum is 10100 (more than 10000)
     let shares_high = Vec::from_array(&env, [6100, 4000]);
-    let res = client.try_create_split(&owner, &Symbol::new(&env, "fail"), &recipients, &shares_high);
+    let res = client.try_create_split(
+        &owner,
+        &Symbol::new(&env, "fail"),
+        &recipients,
+        &shares_high,
+    );
     assert!(res.is_err());
 }
 
@@ -237,7 +248,12 @@ fn test_update_split_change_recipients_len() {
     let recipients_old = Vec::from_array(&env, [r1.clone(), r2.clone()]);
     let shares_old = Vec::from_array(&env, [5000, 5000]);
 
-    let split_id = client.create_split(&owner, &Symbol::new(&env, "resize"), &recipients_old, &shares_old);
+    let split_id = client.create_split(
+        &owner,
+        &Symbol::new(&env, "resize"),
+        &recipients_old,
+        &shares_old,
+    );
 
     // Update to 3 recipients (40/40/20)
     let recipients_new = Vec::from_array(&env, [r1, r2, r3]);
@@ -249,4 +265,3 @@ fn test_update_split_change_recipients_len() {
     assert_eq!(config.recipients.len(), 3);
     assert_eq!(config.shares_bps, shares_new);
 }
-

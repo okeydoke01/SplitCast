@@ -1,7 +1,8 @@
 #![cfg(test)]
+#![allow(deprecated)]
 
 use super::*;
-use soroban_sdk::{testutils::Address as _, Env, Vec, Symbol, Address};
+use soroban_sdk::{testutils::Address as _, Address, Env, Symbol, Vec};
 
 // Define split registry mock to deploy alongside splitter
 #[contract]
@@ -111,7 +112,11 @@ fn test_pay_50_50() {
     token_admin_client.mint(&payer, &1000);
 
     // Get recipients from mock registry config for split_id = 1
-    let config: SplitConfig = env.invoke_contract(&registry_id, &Symbol::new(&env, "get_split"), soroban_sdk::vec![&env, 1u64.into_val(&env)]);
+    let config: SplitConfig = env.invoke_contract(
+        &registry_id,
+        &Symbol::new(&env, "get_split"),
+        soroban_sdk::vec![&env, 1u64.into_val(&env)],
+    );
     let r1 = config.recipients.get(0).unwrap();
     let r2 = config.recipients.get(1).unwrap();
 
@@ -152,7 +157,11 @@ fn test_pay_dust_routing() {
     token_admin_client.mint(&payer, &1000);
 
     // Get split_id = 2 configuration (70/20/10)
-    let config: SplitConfig = env.invoke_contract(&registry_id, &Symbol::new(&env, "get_split"), soroban_sdk::vec![&env, 2u64.into_val(&env)]);
+    let config: SplitConfig = env.invoke_contract(
+        &registry_id,
+        &Symbol::new(&env, "get_split"),
+        soroban_sdk::vec![&env, 2u64.into_val(&env)],
+    );
     let r1 = config.recipients.get(0).unwrap();
     let r2 = config.recipients.get(1).unwrap();
     let r3 = config.recipients.get(2).unwrap();
@@ -194,7 +203,11 @@ fn test_pay_accumulate_multiple() {
     let payer = Address::generate(&env);
     token_admin_client.mint(&payer, &1000);
 
-    let config: SplitConfig = env.invoke_contract(&registry_id, &Symbol::new(&env, "get_split"), soroban_sdk::vec![&env, 1u64.into_val(&env)]);
+    let config: SplitConfig = env.invoke_contract(
+        &registry_id,
+        &Symbol::new(&env, "get_split"),
+        soroban_sdk::vec![&env, 1u64.into_val(&env)],
+    );
     let r1 = config.recipients.get(0).unwrap();
 
     // Pay twice: 100 then 250
@@ -268,7 +281,11 @@ fn test_pay_single_recipient() {
     let payer = Address::generate(&env);
     token_admin_client.mint(&payer, &1000);
 
-    let config: SplitConfig = env.invoke_contract(&registry_id, &Symbol::new(&env, "get_split"), soroban_sdk::vec![&env, 3u64.into_val(&env)]);
+    let config: SplitConfig = env.invoke_contract(
+        &registry_id,
+        &Symbol::new(&env, "get_split"),
+        soroban_sdk::vec![&env, 3u64.into_val(&env)],
+    );
     let r1 = config.recipients.get(0).unwrap();
 
     splitter_client.pay(&payer, &3, &token_id, &500);
@@ -298,7 +315,11 @@ fn test_pay_with_zero_share_recipient() {
     let payer = Address::generate(&env);
     token_admin_client.mint(&payer, &1000);
 
-    let config: SplitConfig = env.invoke_contract(&registry_id, &Symbol::new(&env, "get_split"), soroban_sdk::vec![&env, 4u64.into_val(&env)]);
+    let config: SplitConfig = env.invoke_contract(
+        &registry_id,
+        &Symbol::new(&env, "get_split"),
+        soroban_sdk::vec![&env, 4u64.into_val(&env)],
+    );
     let r1 = config.recipients.get(0).unwrap();
     let r2 = config.recipients.get(1).unwrap();
     let r3 = config.recipients.get(2).unwrap();
@@ -318,4 +339,3 @@ fn test_pay_with_zero_share_recipient() {
     assert_eq!(splitter_client.total_earned(&4, &r2), 300);
     assert_eq!(splitter_client.total_earned(&4, &r3), 0);
 }
-

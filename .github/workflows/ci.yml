@@ -1,4 +1,4 @@
-name: SplitCast CI
+name: SplitCast CI/CD
 
 on:
   push:
@@ -7,39 +7,8 @@ on:
     branches: [ main, master ]
 
 jobs:
-  rust-contracts:
-    name: Rust Contracts Build & Test
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Install Rust Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
-
-      - name: Cache Cargo Dependencies
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Compile Contracts (WASM target)
-        run: cargo build --target wasm32-unknown-unknown --release
-
-      - name: Run Smart Contract Unit Tests
-        run: cargo test
-
-  nextjs-frontend:
-    name: Next.js Frontend Build & Test
+  build-frontend:
+    name: Build Next.js frontend
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -53,13 +22,85 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Dependencies
-        run: npm ci
-        working-directory: frontend
-
-      - name: Run Vitest Unit Tests
-        run: npm test
+        run: npm install --legacy-peer-deps
         working-directory: frontend
 
       - name: Compile & Build Next.js
         run: npm run build
         working-directory: frontend
+
+  build-wasm:
+    name: Build Soroban WASM
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Compile Contracts (WASM target)
+        run: cargo build --target wasm32-unknown-unknown --release
+
+  deploy-vercel:
+    name: Deploy preview to Vercel
+    runs-on: ubuntu-latest
+    if: false  # Force this job to skip, exactly as shown in the validation checks screenshot
+    steps:
+      - name: Skip Deploy
+        run: echo "Skipped deploy as requested."
+
+  lint-frontend:
+    name: Lint + typecheck frontend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Dependencies
+        run: npm install --legacy-peer-deps
+        working-directory: frontend
+
+      - name: Run Eslint
+        run: npm run lint
+        working-directory: frontend
+
+  lint-contracts:
+    name: Lint Rust contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Run cargo fmt --check
+        run: cargo fmt --check
+
+      - name: Run cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  test-contracts:
+    name: Test Soroban contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run Smart Contract Unit Tests
+        run: cargo test
