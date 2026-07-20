@@ -5,6 +5,7 @@ export const runtime = 'edge';
 
 const CAST_ISSUER_SECRET = process.env.CAST_ISSUER_SECRET || 'SBCR47DEA23L3BENXW5UPX6FMGYEDLUQOHEEJK3A2FRRYQ2QIUMSILVJ';
 const CAST_ISSUER_PUBLIC = process.env.NEXT_PUBLIC_CAST_ISSUER_ADDRESS || 'GB62STQZEV3ETLYGD34PIDOY4MILBYW5PUMHWGP435Y4RVUOTZUUD3FD';
+const DEMO_PAYER_SECRET = 'SBLWM7DCPUJVPI4AR6TZF6EEB4OSIBWAYR3ISSKFAFJ5K7L3TFIPTMH4';
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 
 export async function POST(request: Request) {
@@ -19,61 +20,149 @@ export async function POST(request: Request) {
     }
 
     const issuerKeypair = Keypair.fromSecret(CAST_ISSUER_SECRET);
-    
-    // Load issuer account sequence via REST
-    const accRes = await fetch(`${HORIZON_URL}/accounts/${issuerKeypair.publicKey()}`);
-    if (!accRes.ok) {
-      return NextResponse.json(
-        { error: 'Failed to query issuer account sequence from Stellar Horizon' },
-        { status: 500 }
-      );
-    }
-    const accData = await accRes.json();
-    const account = new Account(accData.account_id, accData.sequence);
-
     const isXlmToCast = mode !== 'CAST_TO_XLM';
     const numAmount = parseFloat(amount);
 
-    let paymentOp;
-    let receiveStr;
+    let submitXdr: string;
+    let receiveStr: string;
 
-    if (isXlmToCast) {
-      // Swap XLM -> CAST (Rate: 1 XLM = 10 CAST)
-      const castAmount = (numAmount * 10).toFixed(7);
-      const castAsset = new Asset('CAST', CAST_ISSUER_PUBLIC);
-      paymentOp = Operation.payment({
-        destination: destination,
-        asset: castAsset,
-        amount: castAmount,
-      });
-      receiveStr = `${(numAmount * 10).toFixed(2)} CAST`;
+    // Check if destination is Demo Wallet keypair (which we can co-sign automatically)
+    if (destination === 'GBREN2KJHTES3VN4FT6GROWIVSOAHWT7QH56IXKUDX7KXM4OYMM3BJBX') {
+      const demoKeypair = Keypair.fromSecret(DEMO_PAYER_SECRET);
+
+      const accRes = await fetch(`${HORIZON_URL}/accounts/${demoKeypair.publicKey()}`);
+      if (!accRes.ok) {
+        return NextResponse.json({ error: 'Failed to query demo account sequence' }, { status: 500 });
+      }
+      const accData = await accRes.json();
+      const account = new Account(accData.account_id, accData.sequence);
+
+      const castAsset = new Asset('CAST', issuerKeypair.publicKey());
+
+      if (isXlmToCast) {
+        const castAmount = (numAmount * 10).toFixed(7);
+        const xlmAmount = numAmount.toFixed(7);
+
+        // Op 1: User pays XLM to Issuer
+        // Op 2: Issuer pays CAST to User
+        const tx = new TransactionBuilder(account, {
+          fee: '10000',
+          networkPassphrase: 'Test SDF Network ; September 2015',
+        })
+          .addOperation(
+            Operation.payment({
+              source: demoKeypair.publicKey(),
+              destination: issuerKeypair.publicKey(),
+              asset: Asset.native(),
+              amount: xlmAmount,
+            })
+          )
+          .addOperation(
+            Operation.payment({
+              source: issuerKeypair.publicKey(),
+              destination: demoKeypair.publicKey(),
+              asset: castAsset,
+              amount: castAmount,
+            })
+          )
+          .setTimeout(TimeoutInfinite)
+          .build();
+
+        tx.sign(demoKeypair);
+        tx.sign(issuerKeypair);
+        submitXdr = tx.toXDR();
+        receiveStr = `${(numAmount * 10).toFixed(2)} CAST`;
+      } else {
+        const xlmAmount = (numAmount / 10).toFixed(7);
+        const castAmount = numAmount.toFixed(7);
+
+        // Op 1: User pays CAST to Issuer
+        // Op 2: Issuer pays XLM to User
+        const tx = new TransactionBuilder(account, {
+          fee: '10000',
+          networkPassphrase: 'Test SDF Network ; September 2015',
+        })
+          .addOperation(
+            Operation.payment({
+              source: demoKeypair.publicKey(),
+              destination: issuerKeypair.publicKey(),
+              asset: castAsset,
+              amount: castAmount,
+            })
+          )
+          .addOperation(
+            Operation.payment({
+              source: issuerKeypair.publicKey(),
+              destination: demoKeypair.publicKey(),
+              asset: Asset.native(),
+              amount: xlmAmount,
+            })
+          )
+          .setTimeout(TimeoutInfinite)
+          .build();
+
+        tx.sign(demoKeypair);
+        tx.sign(issuerKeypair);
+        submitXdr = tx.toXDR();
+        receiveStr = `${(numAmount / 10).toFixed(2)} XLM`;
+      }
     } else {
-      // Swap CAST -> XLM (Rate: 10 CAST = 1 XLM)
-      const xlmAmount = (numAmount / 10).toFixed(7);
-      paymentOp = Operation.payment({
-        destination: destination,
-        asset: Asset.native(),
-        amount: xlmAmount,
-      });
-      receiveStr = `${(numAmount / 10).toFixed(2)} XLM`;
+      // External wallet / Freighter
+      const accRes = await fetch(`${HORIZON_URL}/accounts/${issuerKeypair.publicKey()}`);
+      if (!accRes.ok) {
+        return NextResponse.json({ error: 'Failed to query issuer account sequence' }, { status: 500 });
+      }
+      const accData = await accRes.json();
+      const account = new Account(accData.account_id, accData.sequence);
+
+      const castAsset = new Asset('CAST', issuerKeypair.publicKey());
+
+      if (isXlmToCast) {
+        const castAmount = (numAmount * 10).toFixed(7);
+        const tx = new TransactionBuilder(account, {
+          fee: '10000',
+          networkPassphrase: 'Test SDF Network ; September 2015',
+        })
+          .addOperation(
+            Operation.payment({
+              destination: destination,
+              asset: castAsset,
+              amount: castAmount,
+            })
+          )
+          .setTimeout(TimeoutInfinite)
+          .build();
+
+        tx.sign(issuerKeypair);
+        submitXdr = tx.toXDR();
+        receiveStr = `${(numAmount * 10).toFixed(2)} CAST`;
+      } else {
+        const xlmAmount = (numAmount / 10).toFixed(7);
+        const tx = new TransactionBuilder(account, {
+          fee: '10000',
+          networkPassphrase: 'Test SDF Network ; September 2015',
+        })
+          .addOperation(
+            Operation.payment({
+              destination: destination,
+              asset: Asset.native(),
+              amount: xlmAmount,
+            })
+          )
+          .setTimeout(TimeoutInfinite)
+          .build();
+
+        tx.sign(issuerKeypair);
+        submitXdr = tx.toXDR();
+        receiveStr = `${(numAmount / 10).toFixed(2)} XLM`;
+      }
     }
-
-    const tx = new TransactionBuilder(account, {
-      fee: '10000',
-      networkPassphrase: 'Test SDF Network ; September 2015',
-    })
-      .addOperation(paymentOp)
-      .setTimeout(TimeoutInfinite)
-      .build();
-
-    tx.sign(issuerKeypair);
-    const xdr = tx.toXDR();
 
     // Submit XDR directly to Horizon REST endpoint
     const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `tx=${encodeURIComponent(xdr)}`,
+      body: `tx=${encodeURIComponent(submitXdr)}`,
     });
 
     const submitJson = await submitRes.json();

@@ -22,6 +22,7 @@ export default function SwapPage() {
     publicKey, 
     connected, 
     connect, 
+    isDemoWallet,
     xlmBalance, 
     castBalance, 
     hasCastTrustline, 
@@ -143,59 +144,139 @@ export default function SwapPage() {
         const horizonUrl = 'https://horizon-testnet.stellar.org';
 
         const issuerKeypair = Keypair.fromSecret(issuerSecret);
-        const accRes = await fetch(`${horizonUrl}/accounts/${issuerKeypair.publicKey()}`);
-        if (!accRes.ok) {
-          throw new Error('Failed to query issuer account sequence from Stellar Testnet.');
-        }
-        const accData = await accRes.json();
-        const account = new Account(accData.account_id, accData.sequence);
+        const castAsset = new Asset('CAST', issuerPublic);
 
-        let paymentOp;
-        if (isXlmToCast) {
-          const castAmount = (numInput * 10).toFixed(7);
-          paymentOp = Operation.payment({
-            destination: publicKey,
-            asset: new Asset('CAST', issuerPublic),
-            amount: castAmount,
-          });
-          receiveSummary = `${(numInput * 10).toFixed(2)} CAST`;
+        let submitXdr = '';
+        let recStr = '';
+
+        if (isDemoWallet) {
+          const demoKeypair = Keypair.fromSecret('SBLWM7DCPUJVPI4AR6TZF6EEB4OSIBWAYR3ISSKFAFJ5K7L3TFIPTMH4');
+          const accRes = await fetch(`${horizonUrl}/accounts/${demoKeypair.publicKey()}`);
+          const accData = await accRes.json();
+          const account = new Account(accData.account_id, accData.sequence);
+
+          if (isXlmToCast) {
+            const castAmount = (numInput * 10).toFixed(7);
+            const xlmAmount = numInput.toFixed(7);
+
+            const tx = new TransactionBuilder(account, {
+              fee: '10000',
+              networkPassphrase: 'Test SDF Network ; September 2015',
+            })
+              .addOperation(
+                Operation.payment({
+                  source: demoKeypair.publicKey(),
+                  destination: issuerPublic,
+                  asset: Asset.native(),
+                  amount: xlmAmount,
+                })
+              )
+              .addOperation(
+                Operation.payment({
+                  source: issuerPublic,
+                  destination: demoKeypair.publicKey(),
+                  asset: castAsset,
+                  amount: castAmount,
+                })
+              )
+              .setTimeout(TimeoutInfinite)
+              .build();
+
+            tx.sign(demoKeypair);
+            tx.sign(issuerKeypair);
+            submitXdr = tx.toXDR();
+            recStr = `${(numInput * 10).toFixed(2)} CAST`;
+          } else {
+            const xlmAmount = (numInput / 10).toFixed(7);
+            const castAmount = numInput.toFixed(7);
+
+            const tx = new TransactionBuilder(account, {
+              fee: '10000',
+              networkPassphrase: 'Test SDF Network ; September 2015',
+            })
+              .addOperation(
+                Operation.payment({
+                  source: demoKeypair.publicKey(),
+                  destination: issuerPublic,
+                  asset: castAsset,
+                  amount: castAmount,
+                })
+              )
+              .addOperation(
+                Operation.payment({
+                  source: issuerPublic,
+                  destination: demoKeypair.publicKey(),
+                  asset: Asset.native(),
+                  amount: xlmAmount,
+                })
+              )
+              .setTimeout(TimeoutInfinite)
+              .build();
+
+            tx.sign(demoKeypair);
+            tx.sign(issuerKeypair);
+            submitXdr = tx.toXDR();
+            recStr = `${(numInput / 10).toFixed(2)} XLM`;
+          }
         } else {
-          const xlmAmount = (numInput / 10).toFixed(7);
-          paymentOp = Operation.payment({
-            destination: publicKey,
-            asset: Asset.native(),
-            amount: xlmAmount,
-          });
-          receiveSummary = `${(numInput / 10).toFixed(2)} XLM`;
+          const accRes = await fetch(`${horizonUrl}/accounts/${issuerKeypair.publicKey()}`);
+          const accData = await accRes.json();
+          const account = new Account(accData.account_id, accData.sequence);
+
+          if (isXlmToCast) {
+            const castAmount = (numInput * 10).toFixed(7);
+            const tx = new TransactionBuilder(account, {
+              fee: '10000',
+              networkPassphrase: 'Test SDF Network ; September 2015',
+            })
+              .addOperation(
+                Operation.payment({
+                  destination: publicKey,
+                  asset: castAsset,
+                  amount: castAmount,
+                })
+              )
+              .setTimeout(TimeoutInfinite)
+              .build();
+
+            tx.sign(issuerKeypair);
+            submitXdr = tx.toXDR();
+            recStr = `${(numInput * 10).toFixed(2)} CAST`;
+          } else {
+            const xlmAmount = (numInput / 10).toFixed(7);
+            const tx = new TransactionBuilder(account, {
+              fee: '10000',
+              networkPassphrase: 'Test SDF Network ; September 2015',
+            })
+              .addOperation(
+                Operation.payment({
+                  destination: publicKey,
+                  asset: Asset.native(),
+                  amount: xlmAmount,
+                })
+              )
+              .setTimeout(TimeoutInfinite)
+              .build();
+
+            tx.sign(issuerKeypair);
+            submitXdr = tx.toXDR();
+            recStr = `${(numInput / 10).toFixed(2)} XLM`;
+          }
         }
-
-        const tx = new TransactionBuilder(account, {
-          fee: '10000',
-          networkPassphrase: 'Test SDF Network ; September 2015',
-        })
-          .addOperation(paymentOp)
-          .setTimeout(TimeoutInfinite)
-          .build();
-
-        tx.sign(issuerKeypair);
-        const xdr = tx.toXDR();
 
         const submitRes = await fetch(`${horizonUrl}/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `tx=${encodeURIComponent(xdr)}`,
+          body: `tx=${encodeURIComponent(submitXdr)}`,
         });
 
         const submitJson = await submitRes.json();
         if (!submitRes.ok || !submitJson.successful) {
-          const opCodes = submitJson?.extras?.result_codes?.operations;
-          if (opCodes?.includes('op_no_trust')) {
-            throw new Error('Recipient account must enable the CAST trustline first.');
-          }
           throw new Error(submitJson?.title || 'Stellar Testnet swap transaction failed.');
         }
 
         hash = submitJson.hash;
+        receiveSummary = recStr;
       }
 
       setSuccessHash(hash);
@@ -219,7 +300,7 @@ export default function SwapPage() {
           <div className="text-center mb-8">
             <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-accent-primary/10 border border-accent-primary/20 mb-4">
               <Sparkles className="w-4 h-4 text-accent-primary animate-pulse" />
-              <span className="text-xs font-semibold text-accent-primary tracking-wide uppercase">Instant Testnet Faucet Swap</span>
+              <span className="text-xs font-semibold text-accent-primary tracking-wide uppercase">Atomic Testnet Token Swap</span>
             </div>
             <h1 className="text-3xl sm:text-4xl font-bold font-space-grotesk text-text-primary tracking-tight">
               {isXlmToCast ? 'Swap XLM to CAST' : 'Swap CAST to XLM'}
