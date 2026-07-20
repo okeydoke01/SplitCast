@@ -5,7 +5,7 @@ import { Navigation } from '@/components/Navigation';
 import { useWallet } from '@/context/WalletContext';
 import { Contract } from '@stellar/stellar-sdk';
 import { toAddressScVal, toU64ScVal, toI128ScVal, prepareTx, submitTx, fetchSplitConfig, OnChainSplitConfig } from '@/utils/soroban';
-import { Loader2, Sparkles, CheckCircle2, AlertCircle, Search, CreditCard, ShieldCheck } from 'lucide-react';
+import { Loader2, Sparkles, CheckCircle2, AlertCircle, Search, CreditCard, ShieldCheck, Wallet } from 'lucide-react';
 
 const SPLITTER_ADDRESS = process.env.NEXT_PUBLIC_SPLITTER_CONTRACT_ADDRESS || '';
 const CAST_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_CAST_TOKEN_ADDRESS || '';
@@ -44,11 +44,19 @@ export default function PaySplit() {
     setRecipientTrustlines(statusMap);
   }, []);
 
-  // Auto pre-fill Split ID from URL query param (?id=X)
+  // Auto pre-fill Split ID & Amount from URL query params (?id=X&amount=Y)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const queryId = params.get('id');
+      const queryAmount = params.get('amount');
+
+      if (queryAmount && !isNaN(parseFloat(queryAmount)) && parseFloat(queryAmount) > 0) {
+        // Round query amount to clean decimal if needed
+        const cleanVal = Math.round(parseFloat(queryAmount) * 10000) / 10000;
+        setAmount(cleanVal.toString());
+      }
+
       if (queryId && !isNaN(Number(queryId))) {
         setSearchId(queryId);
         const autoResolve = async () => {
@@ -396,19 +404,58 @@ export default function PaySplit() {
             {/* Pay form */}
             <form onSubmit={handlePay} className="space-y-6">
               <div>
-                <label htmlFor="pay-amount" className="block text-sm font-semibold text-text-primary mb-2">
-                  Amount to Route (CAST)
-                </label>
+                <div className="flex justify-between items-center mb-2">
+                  <label htmlFor="pay-amount" className="block text-sm font-semibold text-text-primary">
+                    Amount to Route (CAST)
+                  </label>
+                  {connected && (
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => setAmount('10')}
+                        className="px-2 py-0.5 text-[10px] font-bold bg-[#15141c] hover:bg-accent-primary/20 border border-border-subtle hover:border-accent-primary/50 text-text-secondary hover:text-white rounded-md transition-colors cursor-pointer"
+                      >
+                        10
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAmount('50')}
+                        className="px-2 py-0.5 text-[10px] font-bold bg-[#15141c] hover:bg-accent-primary/20 border border-border-subtle hover:border-accent-primary/50 text-text-secondary hover:text-white rounded-md transition-colors cursor-pointer"
+                      >
+                        50
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAmount('100')}
+                        className="px-2 py-0.5 text-[10px] font-bold bg-[#15141c] hover:bg-accent-primary/20 border border-border-subtle hover:border-accent-primary/50 text-text-secondary hover:text-white rounded-md transition-colors cursor-pointer"
+                      >
+                        100
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setAmount(castBalance)}
+                        className="px-2 py-0.5 text-[10px] font-bold bg-accent-primary/10 hover:bg-accent-primary/20 border border-accent-primary/30 text-accent-primary rounded-md transition-colors uppercase cursor-pointer"
+                      >
+                        MAX ({parseFloat(castBalance).toFixed(0)})
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div className="relative">
                   <input
-                    type="number"
+                    type="text"
                     id="pay-amount"
-                    step="0.0001"
-                    min="0.0001"
+                    inputMode="decimal"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      // Allow digits and single decimal point
+                      if (val === '' || /^\d*\.?\d*$/.test(val)) {
+                        setAmount(val);
+                      }
+                    }}
                     placeholder="0.0000"
-                    className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm text-white placeholder-text-secondary transition-all outline-none font-variant-numeric-tabular-nums"
+                    className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm text-white placeholder-text-secondary transition-all outline-none font-variant-numeric-tabular-nums font-mono text-lg"
                     disabled={loading}
                   />
                   <span className="absolute right-4 top-3.5 text-xs text-text-secondary font-bold">CAST</span>
@@ -447,6 +494,7 @@ export default function PaySplit() {
                   onClick={connect}
                   className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 text-white font-semibold py-3.5 rounded-xl cursor-pointer text-sm"
                 >
+                  <Wallet className="w-4 h-4" />
                   <span>Connect Wallet to Execute</span>
                 </button>
               ) : (
