@@ -15,12 +15,17 @@ const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 export default function PaySplit() {
   const { publicKey, connected, connect, signTx, castBalance, refreshBalances } = useWallet();
   
-  // Search state
+  // All state declarations first
   const [searchId, setSearchId] = useState('');
   const [searching, setSearching] = useState(false);
   const [splitConfig, setSplitConfig] = useState<OnChainSplitConfig | null>(null);
   const [recipientTrustlines, setRecipientTrustlines] = useState<Record<string, boolean>>({});
   const [enablingTrustline, setEnablingTrustline] = useState<string | null>(null);
+  const [amount, setAmount] = useState('');
+  const [paymentPreview, setPaymentPreview] = useState<{ recipient: string; percentage: number; share: number }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Check recipient trustlines status on Stellar Testnet
   const checkRecipientTrustlines = useCallback(async (recipients: string[]) => {
@@ -77,15 +82,6 @@ export default function PaySplit() {
       }
     }
   }, [checkRecipientTrustlines]);
-  
-  // Payment state
-  const [amount, setAmount] = useState('');
-  const [paymentPreview, setPaymentPreview] = useState<{ recipient: string; percentage: number; share: number }[]>([]);
-  
-  // Tx states
-  const [loading, setLoading] = useState(false);
-  const [txHash, setTxHash] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Search split configuration
   const handleSearch = async (e: React.FormEvent) => {
