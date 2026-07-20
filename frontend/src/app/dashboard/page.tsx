@@ -79,8 +79,8 @@ export default function Dashboard() {
     try {
       const latest = await getLatestLedger();
       if (latest > 0) {
-        // Poll last 1500 ledgers (~2 hours) for initial history
-        const startLedger = Math.max(1, latest - 1500);
+        // Poll last 2000 ledgers for history
+        const startLedger = Math.max(1, latest - 2000);
         lastLedgerRef.current = latest;
         const events = await fetchEvents(startLedger);
         
@@ -102,7 +102,7 @@ export default function Dashboard() {
     }
   }, [connected, publicKey, loadDashboardData, loadRecentActivities]);
 
-  // Real-time Event Polling (2-5s, using SWR / setInterval polling pattern)
+  // Real-time Event Polling (2-4s)
   useEffect(() => {
     if (!connected || !publicKey) return;
 
@@ -112,13 +112,10 @@ export default function Dashboard() {
         const latest = await getLatestLedger();
         let nextLedger = lastLedgerRef.current + 1;
 
-        // If nextLedger is too far behind (outside typical testnet event retention window),
-        // reset it to the latest ledgers to avoid RPC range errors.
         if (latest > 0 && nextLedger < latest - 1000) {
           nextLedger = latest - 10;
         }
 
-        // If nextLedger is greater than the latest closed ledger, skip this polling tick.
         if (latest > 0 && nextLedger > latest) {
           return;
         }
@@ -126,19 +123,15 @@ export default function Dashboard() {
         const newEvents = await fetchEvents(nextLedger);
 
         if (newEvents.length > 0) {
-          // Update last ledger
           const maxLedger = Math.max(...newEvents.map((e) => e.ledger));
           lastLedgerRef.current = maxLedger;
 
-          // Merge new events into activities (newest at the top)
           setActivities((prev) => [...newEvents.reverse(), ...prev]);
 
-          // Process events to trigger ticker and highlight animations
           let splitsUpdated = false;
           const currentSplits = [...splitsRef.current];
 
           for (const event of newEvents) {
-            // If the user earned tokens on a split
             if (event.type === 'earned' && event.recipient.toLowerCase() === publicKey.toLowerCase()) {
               const splitIdx = currentSplits.findIndex((s) => s.id === event.splitId);
               if (splitIdx !== -1) {
@@ -151,7 +144,6 @@ export default function Dashboard() {
 
           if (splitsUpdated) {
             setSplits(currentSplits);
-            // Clear highlight flash after 2 seconds
             setTimeout(() => {
               setSplits((prevSplits) =>
                 prevSplits.map((s) => ({ ...s, isFlashing: false }))
@@ -162,7 +154,7 @@ export default function Dashboard() {
       } catch (err) {
         console.error('Error in event polling loop:', err);
       }
-    }, 4000); // Poll every 4 seconds
+    }, 4000);
 
     return () => clearInterval(pollInterval);
   }, [connected, publicKey]);
@@ -178,13 +170,13 @@ export default function Dashboard() {
             <Wallet className="w-12 h-12 text-text-secondary mx-auto mb-4" />
             <h3 className="text-xl font-bold font-space-grotesk text-white">Connect Your Wallet</h3>
             <p className="text-sm text-text-secondary mt-2 mb-6">
-              Connect your Freighter wallet to view your active split definitions, cumulative earnings, and real-time payments feed.
+              Connect your wallet to view your active split definitions, cumulative earnings, and real-time payments feed.
             </p>
             <button
               onClick={connect}
-              className="bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 text-white font-semibold text-sm px-6 py-2.5 rounded-full cursor-pointer"
+              className="bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 text-white font-semibold text-sm px-6 py-2.5 rounded-full cursor-pointer shadow-lg shadow-accent-primary/20"
             >
-              Connect Freighter
+              Connect Wallet
             </button>
           </div>
         ) : (
@@ -347,20 +339,30 @@ export default function Dashboard() {
 
               {/* Live Activity Feed (Right 1 column) */}
               <div className="space-y-4">
-                <h3 className="text-lg font-bold font-space-grotesk text-white flex items-center gap-2">
-                  <History className="w-4 h-4 text-accent-primary" />
-                  <span>Live Routing Feed</span>
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-bold font-space-grotesk text-white flex items-center gap-2">
+                    <History className="w-4 h-4 text-accent-primary" />
+                    <span>Live Routing Feed</span>
+                  </h3>
+                  <button
+                    onClick={loadRecentActivities}
+                    className="text-xs text-accent-primary hover:underline cursor-pointer"
+                  >
+                    Refresh Feed
+                  </button>
+                </div>
 
-                <div className="bg-bg-surface border border-border-subtle rounded-2xl p-4 h-[420px] overflow-y-auto flex flex-col gap-3 relative">
+                <div className="bg-bg-surface border border-border-subtle rounded-2xl p-4 h-[460px] overflow-y-auto flex flex-col gap-3 relative">
                   {loadingActivity ? (
                     <div className="flex flex-col items-center justify-center h-full text-center">
                       <Loader2 className="w-6 h-6 animate-spin text-accent-primary mb-2" />
-                      <p className="text-xs text-text-secondary">Syncing routing records...</p>
+                      <p className="text-xs text-text-secondary">Syncing live routing records from Stellar...</p>
                     </div>
                   ) : activities.length === 0 ? (
-                    <div className="flex items-center justify-center h-full text-center text-xs text-text-secondary">
-                      No routing records recorded.
+                    <div className="flex flex-col items-center justify-center h-full text-center p-6 space-y-2">
+                      <History className="w-8 h-8 text-text-muted opacity-40" />
+                      <p className="text-xs font-semibold text-white">No Routing Events Recorded Yet</p>
+                      <p className="text-[11px] text-text-secondary">Execute a split payment on the Pay page to watch real-time events route here.</p>
                     </div>
                   ) : (
                     activities.map((event, idx) => {
@@ -370,47 +372,51 @@ export default function Dashboard() {
                       return (
                         <div
                           key={event.ledger + '-' + idx}
-                          className={`p-3 rounded-xl border transition-all duration-500 animate-slide-in relative overflow-hidden ${
+                          className={`p-3.5 rounded-xl border transition-all duration-300 shadow-md ${
                             isMyEarned
-                              ? 'bg-accent-success/10 border-accent-success/30 shadow shadow-accent-success/10'
-                              : 'bg-bg-surface-hover border-border-subtle'
+                              ? 'bg-accent-success/15 border-accent-success/40 text-white'
+                              : 'bg-[#121118] border-border-subtle hover:border-accent-primary/40'
                           }`}
                         >
-                          <div className="flex justify-between items-start text-[10px]">
-                            <span className="font-semibold text-text-secondary font-mono">
+                          <div className="flex justify-between items-center mb-2">
+                            <span className="text-[11px] font-bold px-2 py-0.5 rounded-md bg-accent-primary/20 text-accent-primary border border-accent-primary/30 font-mono">
                               Split #{event.splitId}
                             </span>
-                            <span className="text-text-secondary">
-                              Ledger {event.ledger}
+                            <span className="text-xs font-mono text-text-secondary font-medium">
+                              Ledger #{event.ledger}
                             </span>
                           </div>
 
                           {isEarned ? (
-                            <div className="mt-1.5 flex justify-between items-center text-xs">
-                              <span className="text-text-secondary truncate max-w-[130px] font-mono text-[10px]">
-                                {isMyEarned ? 'You Earned' : `Rec: ${event.recipient.slice(0,4)}...${event.recipient.slice(-4)}`}
+                            <div className="flex justify-between items-center text-xs pt-1">
+                              <span className="font-semibold text-white truncate max-w-[140px]">
+                                {isMyEarned ? '🎉 You Earned' : `Payout to ${event.recipient.slice(0,4)}...${event.recipient.slice(-4)}`}
                               </span>
-                              <span className={`font-bold font-variant-numeric-tabular-nums ${
-                                isMyEarned ? 'text-accent-success text-sm' : 'text-text-primary'
+                              <span className={`font-bold font-mono text-sm ${
+                                isMyEarned ? 'text-accent-success' : 'text-text-primary'
                               }`}>
                                 +{event.amount.toFixed(4)} CAST
                               </span>
                             </div>
                           ) : (
-                            <div className="mt-1.5 space-y-1">
+                            <div className="space-y-1.5 pt-1">
                               <div className="flex justify-between items-center text-xs">
-                                <span className="text-text-secondary truncate max-w-[130px] font-mono text-[10px]">
-                                  Routed Payment
-                                </span>
-                                <span className="font-bold text-accent-primary font-variant-numeric-tabular-nums">
+                                <span className="font-semibold text-white">Routed Payment</span>
+                                <span className="font-bold font-mono text-sm text-accent-secondary">
                                   {event.amount.toFixed(4)} CAST
                                 </span>
                               </div>
-                              <div className="flex items-center justify-between text-[9px] text-text-secondary">
-                                <span>Payer: {event.payer.slice(0,4)}...{event.payer.slice(-4)}</span>
-                                <span className="flex items-center gap-0.5 text-accent-secondary hover:underline">
-                                  Atomic <ArrowUpRight className="w-2.5 h-2.5" />
-                                </span>
+                              <div className="flex items-center justify-between text-[11px] text-text-secondary pt-0.5">
+                                <span className="font-mono">Payer: {event.payer.slice(0,4)}...{event.payer.slice(-4)}</span>
+                                <a
+                                  href={`https://stellar.expert/explorer/testnet/tx/${event.ledger}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex items-center gap-1 text-accent-secondary hover:text-white font-medium transition-colors"
+                                >
+                                  <span>Atomic Split</span>
+                                  <ArrowUpRight className="w-3 h-3" />
+                                </a>
                               </div>
                             </div>
                           )}
