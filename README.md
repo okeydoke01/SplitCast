@@ -8,6 +8,13 @@
 
 ---
 
+## CI/CD Test Pipeline Passing
+All 6 automated continuous integration, contract testing, and deployment checks pass on every push:
+
+![CI/CD Passing Checks](./screenshots/ci_cd.png)
+
+---
+
 ## Screenshots
 
 | Desktop Homepage | Mobile Responsive View |
