@@ -43,8 +43,8 @@ export async function POST(request: Request) {
         const castAmount = (numAmount * 10).toFixed(7);
         const xlmAmount = numAmount.toFixed(7);
 
-        // Op 1: User pays XLM to Issuer
-        // Op 2: Issuer pays CAST to User
+        // Op 1: User pays XLM to Issuer (deducts XLM from user)
+        // Op 2: Issuer pays CAST to User (credits CAST to user)
         const tx = new TransactionBuilder(account, {
           fee: '10000',
           networkPassphrase: 'Test SDF Network ; September 2015',
@@ -76,8 +76,8 @@ export async function POST(request: Request) {
         const xlmAmount = (numAmount / 10).toFixed(7);
         const castAmount = numAmount.toFixed(7);
 
-        // Op 1: User pays CAST to Issuer
-        // Op 2: Issuer pays XLM to User
+        // Op 1: User pays CAST to Issuer (deducts CAST from user)
+        // Op 2: Issuer pays XLM to User (credits XLM to user)
         const tx = new TransactionBuilder(account, {
           fee: '10000',
           networkPassphrase: 'Test SDF Network ; September 2015',
@@ -106,84 +106,96 @@ export async function POST(request: Request) {
         submitXdr = tx.toXDR();
         receiveStr = `${(numAmount / 10).toFixed(2)} XLM`;
       }
+
+      // Submit XDR directly to Horizon REST endpoint
+      const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `tx=${encodeURIComponent(submitXdr)}`,
+      });
+
+      const submitJson = await submitRes.json();
+
+      if (!submitRes.ok || !submitJson.successful) {
+        console.error('Horizon Transaction Submit Error:', submitJson);
+        return NextResponse.json({ error: submitJson?.title || 'Stellar Testnet swap transaction failed.' }, { status: 400 });
+      }
+
+      return NextResponse.json({
+        success: true,
+        hash: submitJson.hash,
+        receiveStr: receiveStr,
+      });
     } else {
-      // External wallet / Freighter
-      const accRes = await fetch(`${HORIZON_URL}/accounts/${issuerKeypair.publicKey()}`);
+      // For external wallets (Freighter), return pre-signed issuer transaction XDR
+      const accRes = await fetch(`${HORIZON_URL}/accounts/${destination}`);
       if (!accRes.ok) {
-        return NextResponse.json({ error: 'Failed to query issuer account sequence' }, { status: 500 });
+        return NextResponse.json({ error: 'Failed to query account sequence from Stellar Testnet' }, { status: 500 });
       }
       const accData = await accRes.json();
       const account = new Account(accData.account_id, accData.sequence);
-
       const castAsset = new Asset('CAST', issuerKeypair.publicKey());
+
+      let op1: any;
+      let op2: any;
 
       if (isXlmToCast) {
         const castAmount = (numAmount * 10).toFixed(7);
-        const tx = new TransactionBuilder(account, {
-          fee: '10000',
-          networkPassphrase: 'Test SDF Network ; September 2015',
-        })
-          .addOperation(
-            Operation.payment({
-              destination: destination,
-              asset: castAsset,
-              amount: castAmount,
-            })
-          )
-          .setTimeout(TimeoutInfinite)
-          .build();
+        const xlmAmount = numAmount.toFixed(7);
 
-        tx.sign(issuerKeypair);
-        submitXdr = tx.toXDR();
+        op1 = Operation.payment({
+          source: destination,
+          destination: issuerKeypair.publicKey(),
+          asset: Asset.native(),
+          amount: xlmAmount,
+        });
+
+        op2 = Operation.payment({
+          source: issuerKeypair.publicKey(),
+          destination: destination,
+          asset: castAsset,
+          amount: castAmount,
+        });
+
         receiveStr = `${(numAmount * 10).toFixed(2)} CAST`;
       } else {
         const xlmAmount = (numAmount / 10).toFixed(7);
-        const tx = new TransactionBuilder(account, {
-          fee: '10000',
-          networkPassphrase: 'Test SDF Network ; September 2015',
-        })
-          .addOperation(
-            Operation.payment({
-              destination: destination,
-              asset: Asset.native(),
-              amount: xlmAmount,
-            })
-          )
-          .setTimeout(TimeoutInfinite)
-          .build();
+        const castAmount = numAmount.toFixed(7);
 
-        tx.sign(issuerKeypair);
-        submitXdr = tx.toXDR();
+        op1 = Operation.payment({
+          source: destination,
+          destination: issuerKeypair.publicKey(),
+          asset: castAsset,
+          amount: castAmount,
+        });
+
+        op2 = Operation.payment({
+          source: issuerKeypair.publicKey(),
+          destination: destination,
+          asset: Asset.native(),
+          amount: xlmAmount,
+        });
+
         receiveStr = `${(numAmount / 10).toFixed(2)} XLM`;
       }
+
+      const tx = new TransactionBuilder(account, {
+        fee: '10000',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+      })
+        .addOperation(op1)
+        .addOperation(op2)
+        .setTimeout(TimeoutInfinite)
+        .build();
+
+      tx.sign(issuerKeypair);
+
+      return NextResponse.json({
+        success: true,
+        presignedXdr: tx.toXDR(),
+        receiveStr: receiveStr,
+      });
     }
-
-    // Submit XDR directly to Horizon REST endpoint
-    const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `tx=${encodeURIComponent(submitXdr)}`,
-    });
-
-    const submitJson = await submitRes.json();
-
-    if (!submitRes.ok || !submitJson.successful) {
-      console.error('Horizon Transaction Submit Error:', submitJson);
-      let errorMessage = 'Stellar Testnet swap transaction failed.';
-      const opCodes = submitJson?.extras?.result_codes?.operations;
-      if (opCodes?.includes('op_no_trust')) {
-        errorMessage = 'Your account must establish the CAST trustline before receiving CAST. Click "1-Click Add CAST Trustline".';
-      } else if (submitJson?.title) {
-        errorMessage = `Stellar error: ${submitJson.title}`;
-      }
-      return NextResponse.json({ error: errorMessage }, { status: 400 });
-    }
-
-    return NextResponse.json({
-      success: true,
-      hash: submitJson.hash,
-      receiveStr: receiveStr,
-    });
   } catch (err: any) {
     console.error('Swap API Error:', err);
     return NextResponse.json(

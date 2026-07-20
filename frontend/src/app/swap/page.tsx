@@ -22,6 +22,7 @@ export default function SwapPage() {
     publicKey, 
     connected, 
     connect, 
+    signTx,
     isDemoWallet,
     xlmBalance, 
     castBalance, 
@@ -110,7 +111,7 @@ export default function SwapPage() {
       let hash: string | null = null;
       let receiveSummary = '';
 
-      // Try API Route first
+      // 1. Try fetching presigned XDR from API Route
       try {
         const res = await fetch('/api/swap', {
           method: 'POST',
@@ -122,21 +123,36 @@ export default function SwapPage() {
           }),
         });
 
-        const contentType = res.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          const data = await res.json();
-          if (res.ok && data.success) {
+        const data = await res.json();
+        if (res.ok && data.success) {
+          if (data.hash) {
+            // Already submitted by API (e.g. Demo Wallet)
             hash = data.hash;
             receiveSummary = data.receiveStr;
-          } else if (data.error) {
-            throw new Error(data.error);
+          } else if (data.presignedXdr) {
+            // Pre-signed by Issuer for external/Freighter wallet -> User signs & submits!
+            const fullySignedXdr = await signTx(data.presignedXdr);
+            const horizonUrl = 'https://horizon-testnet.stellar.org';
+            const submitRes = await fetch(`${horizonUrl}/transactions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+              body: `tx=${encodeURIComponent(fullySignedXdr)}`,
+            });
+            const submitJson = await submitRes.json();
+            if (!submitRes.ok || !submitJson.successful) {
+              throw new Error(submitJson?.title || 'Atomic swap transaction failed on Stellar Testnet.');
+            }
+            hash = submitJson.hash;
+            receiveSummary = data.receiveStr;
           }
+        } else if (data.error) {
+          throw new Error(data.error);
         }
       } catch (apiErr: any) {
         console.warn('API route failed, using client-side Stellar execution fallback:', apiErr);
       }
 
-      // Fallback: Direct Client-Side Execution to Stellar Horizon
+      // 2. Client-side Fallback execution
       if (!hash) {
         const { Account, TransactionBuilder, Asset, Operation, Keypair, TimeoutInfinite } = await import('@stellar/stellar-sdk');
         const issuerSecret = 'SBCR47DEA23L3BENXW5UPX6FMGYEDLUQOHEEJK3A2FRRYQ2QIUMSILVJ';
@@ -146,128 +162,73 @@ export default function SwapPage() {
         const issuerKeypair = Keypair.fromSecret(issuerSecret);
         const castAsset = new Asset('CAST', issuerPublic);
 
-        let submitXdr = '';
+        const accRes = await fetch(`${horizonUrl}/accounts/${publicKey}`);
+        if (!accRes.ok) {
+          throw new Error('Failed to query account sequence from Stellar Testnet.');
+        }
+        const accData = await accRes.json();
+        const userAccount = new Account(accData.account_id, accData.sequence);
+
+        let op1: any;
+        let op2: any;
         let recStr = '';
 
-        if (isDemoWallet) {
-          const demoKeypair = Keypair.fromSecret('SBLWM7DCPUJVPI4AR6TZF6EEB4OSIBWAYR3ISSKFAFJ5K7L3TFIPTMH4');
-          const accRes = await fetch(`${horizonUrl}/accounts/${demoKeypair.publicKey()}`);
-          const accData = await accRes.json();
-          const account = new Account(accData.account_id, accData.sequence);
+        if (isXlmToCast) {
+          const castAmount = (numInput * 10).toFixed(7);
+          const xlmAmount = numInput.toFixed(7);
 
-          if (isXlmToCast) {
-            const castAmount = (numInput * 10).toFixed(7);
-            const xlmAmount = numInput.toFixed(7);
+          op1 = Operation.payment({
+            source: publicKey,
+            destination: issuerPublic,
+            asset: Asset.native(),
+            amount: xlmAmount,
+          });
 
-            const tx = new TransactionBuilder(account, {
-              fee: '10000',
-              networkPassphrase: 'Test SDF Network ; September 2015',
-            })
-              .addOperation(
-                Operation.payment({
-                  source: demoKeypair.publicKey(),
-                  destination: issuerPublic,
-                  asset: Asset.native(),
-                  amount: xlmAmount,
-                })
-              )
-              .addOperation(
-                Operation.payment({
-                  source: issuerPublic,
-                  destination: demoKeypair.publicKey(),
-                  asset: castAsset,
-                  amount: castAmount,
-                })
-              )
-              .setTimeout(TimeoutInfinite)
-              .build();
+          op2 = Operation.payment({
+            source: issuerPublic,
+            destination: publicKey,
+            asset: castAsset,
+            amount: castAmount,
+          });
 
-            tx.sign(demoKeypair);
-            tx.sign(issuerKeypair);
-            submitXdr = tx.toXDR();
-            recStr = `${(numInput * 10).toFixed(2)} CAST`;
-          } else {
-            const xlmAmount = (numInput / 10).toFixed(7);
-            const castAmount = numInput.toFixed(7);
-
-            const tx = new TransactionBuilder(account, {
-              fee: '10000',
-              networkPassphrase: 'Test SDF Network ; September 2015',
-            })
-              .addOperation(
-                Operation.payment({
-                  source: demoKeypair.publicKey(),
-                  destination: issuerPublic,
-                  asset: castAsset,
-                  amount: castAmount,
-                })
-              )
-              .addOperation(
-                Operation.payment({
-                  source: issuerPublic,
-                  destination: demoKeypair.publicKey(),
-                  asset: Asset.native(),
-                  amount: xlmAmount,
-                })
-              )
-              .setTimeout(TimeoutInfinite)
-              .build();
-
-            tx.sign(demoKeypair);
-            tx.sign(issuerKeypair);
-            submitXdr = tx.toXDR();
-            recStr = `${(numInput / 10).toFixed(2)} XLM`;
-          }
+          recStr = `${(numInput * 10).toFixed(2)} CAST`;
         } else {
-          const accRes = await fetch(`${horizonUrl}/accounts/${issuerKeypair.publicKey()}`);
-          const accData = await accRes.json();
-          const account = new Account(accData.account_id, accData.sequence);
+          const xlmAmount = (numInput / 10).toFixed(7);
+          const castAmount = numInput.toFixed(7);
 
-          if (isXlmToCast) {
-            const castAmount = (numInput * 10).toFixed(7);
-            const tx = new TransactionBuilder(account, {
-              fee: '10000',
-              networkPassphrase: 'Test SDF Network ; September 2015',
-            })
-              .addOperation(
-                Operation.payment({
-                  destination: publicKey,
-                  asset: castAsset,
-                  amount: castAmount,
-                })
-              )
-              .setTimeout(TimeoutInfinite)
-              .build();
+          op1 = Operation.payment({
+            source: publicKey,
+            destination: issuerPublic,
+            asset: castAsset,
+            amount: castAmount,
+          });
 
-            tx.sign(issuerKeypair);
-            submitXdr = tx.toXDR();
-            recStr = `${(numInput * 10).toFixed(2)} CAST`;
-          } else {
-            const xlmAmount = (numInput / 10).toFixed(7);
-            const tx = new TransactionBuilder(account, {
-              fee: '10000',
-              networkPassphrase: 'Test SDF Network ; September 2015',
-            })
-              .addOperation(
-                Operation.payment({
-                  destination: publicKey,
-                  asset: Asset.native(),
-                  amount: xlmAmount,
-                })
-              )
-              .setTimeout(TimeoutInfinite)
-              .build();
+          op2 = Operation.payment({
+            source: issuerPublic,
+            destination: publicKey,
+            asset: Asset.native(),
+            amount: xlmAmount,
+          });
 
-            tx.sign(issuerKeypair);
-            submitXdr = tx.toXDR();
-            recStr = `${(numInput / 10).toFixed(2)} XLM`;
-          }
+          recStr = `${(numInput / 10).toFixed(2)} XLM`;
         }
+
+        const tx = new TransactionBuilder(userAccount, {
+          fee: '10000',
+          networkPassphrase: 'Test SDF Network ; September 2015',
+        })
+          .addOperation(op1)
+          .addOperation(op2)
+          .setTimeout(TimeoutInfinite)
+          .build();
+
+        tx.sign(issuerKeypair);
+        const fullySignedXdr = await signTx(tx.toXDR());
 
         const submitRes = await fetch(`${horizonUrl}/transactions`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `tx=${encodeURIComponent(submitXdr)}`,
+          body: `tx=${encodeURIComponent(fullySignedXdr)}`,
         });
 
         const submitJson = await submitRes.json();
