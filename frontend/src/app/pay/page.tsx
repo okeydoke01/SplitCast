@@ -122,6 +122,7 @@ export default function PaySplit() {
         throw new Error(data.error || 'Failed to establish trustline for recipient.');
       }
       setRecipientTrustlines(prev => ({ ...prev, [recipient]: true }));
+      await checkRecipientTrustlines(splitConfig?.recipients || []);
     } catch (err: any) {
       console.error('Error enabling recipient trustline:', err);
       setErrorMsg(err?.message || 'Failed to enable recipient trustline.');
@@ -130,7 +131,7 @@ export default function PaySplit() {
     }
   };
 
-  // Calculate live preview breakdown (Precise Math without float truncation)
+  // Calculate live preview breakdown
   useEffect(() => {
     if (!splitConfig || !amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       setPaymentPreview([]);
@@ -145,7 +146,6 @@ export default function PaySplit() {
     for (let i = 0; i < n; i++) {
       const pct = splitConfig.shares_bps[i] / 10000;
       if (i === n - 1) {
-        // Last recipient gets exact remainder to prevent rounding drift
         const share = Math.max(0, Math.round((payVal - totalAllocated) * 10000) / 10000);
         preview.push({
           recipient: splitConfig.recipients[i],
@@ -194,6 +194,17 @@ export default function PaySplit() {
       return;
     }
 
+    // Trustline pre-check for recipients
+    const missingRecipients = splitConfig.recipients.filter(r => recipientTrustlines[r] === false);
+    if (missingRecipients.length > 0) {
+      const missingAddr = missingRecipients[0];
+      setErrorMsg(
+        `Cannot execute payment: Recipient ${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)} is missing a CAST trustline. Please click "Enable" next to their address above to setup their trustline before executing payment.`
+      );
+      setLoading(false);
+      return;
+    }
+
     try {
       // Convert amount to 7 decimal places (Stellar Asset Contract unit)
       const rawAmount = BigInt(Math.round(parsedAmount * 10000000));
@@ -229,10 +240,14 @@ export default function PaySplit() {
       if (errString.includes('User rejected') || errString.includes('rejected')) {
         setErrorMsg('Transaction rejected in wallet. Inputs are preserved.');
       } else if (errString.includes('trustline entry is missing for account') || errString.includes('Error(Contract, #13)')) {
-        const match = errString.match(/G[A-Z0-9]{55}/);
-        const missingAddr = match ? match[0] : '';
+        // Find the exact recipient in this split config that lacks a trustline
+        const missingRecipient = splitConfig.recipients.find(
+          (r) => recipientTrustlines[r] === false
+        );
+        const missingAddr = missingRecipient || '';
+
         setErrorMsg(
-          `Payment failed: Recipient ${missingAddr ? `${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)}` : 'a recipient'} is missing a CAST trustline. On Stellar, recipients must hold a CAST trustline to receive payouts.`
+          `Payment failed: Recipient ${missingAddr ? `${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)}` : 'a recipient'} is missing a CAST trustline. On Stellar, recipients must hold a CAST trustline to receive payouts. Click "Enable" next to their address above.`
         );
       } else {
         setErrorMsg(err?.message || 'Transaction execution failed on-chain.');
@@ -241,6 +256,8 @@ export default function PaySplit() {
       setLoading(false);
     }
   };
+
+  const hasMissingTrustline = splitConfig?.recipients.some(r => recipientTrustlines[r] === false);
 
   return (
     <div className="flex flex-col min-h-screen bg-[#0a0a0c]">
@@ -358,7 +375,7 @@ export default function PaySplit() {
                             type="button"
                             onClick={() => handleEnableRecipientTrustline(recipient)}
                             disabled={enablingTrustline === recipient}
-                            className="text-[10px] bg-accent-primary/20 hover:bg-accent-primary/30 text-accent-primary font-semibold px-2 py-0.5 rounded transition-colors flex items-center gap-1 cursor-pointer"
+                            className="text-[10px] bg-accent-primary/20 hover:bg-accent-primary/30 text-accent-primary font-semibold px-2.5 py-1 rounded-md transition-colors flex items-center gap-1 cursor-pointer"
                           >
                             {enablingTrustline === recipient ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <ShieldCheck className="w-2.5 h-2.5" />}
                             Enable
@@ -368,7 +385,7 @@ export default function PaySplit() {
                         <span className="text-[10px] text-text-muted">Checking status...</span>
                       )}
                     </div>
-                    <span className="font-semibold text-text-primary">
+                    <span className="font-semibold text-text-primary font-mono">
                       {(splitConfig.shares_bps[i] / 100).toFixed(2)}%
                     </span>
                   </div>
@@ -414,7 +431,7 @@ export default function PaySplit() {
                             <span className="text-[10px] text-accent-secondary font-medium ml-1.5">(incl. dust)</span>
                           )}
                         </span>
-                        <span className="font-semibold text-text-primary font-variant-numeric-tabular-nums">
+                        <span className="font-semibold text-text-primary font-mono">
                           {item.share.toFixed(4)} CAST
                         </span>
                       </div>
@@ -424,10 +441,18 @@ export default function PaySplit() {
               )}
 
               {/* Submit */}
-              {connected ? (
+              {!connected ? (
+                <button
+                  type="button"
+                  onClick={connect}
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 text-white font-semibold py-3.5 rounded-xl cursor-pointer text-sm"
+                >
+                  <span>Connect Wallet to Execute</span>
+                </button>
+              ) : (
                 <button
                   type="submit"
-                  disabled={loading || !amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0}
+                  disabled={loading || hasMissingTrustline || !amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0}
                   className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 disabled:opacity-30 disabled:pointer-events-none text-white font-semibold py-3.5 rounded-xl cursor-pointer shadow-lg shadow-accent-primary/10 text-sm tracking-wide transition-opacity"
                 >
                   {loading ? (
@@ -435,17 +460,11 @@ export default function PaySplit() {
                       <Loader2 className="w-4 h-4 animate-spin" />
                       <span>Signing & Executing Fan-out...</span>
                     </>
+                  ) : hasMissingTrustline ? (
+                    <span>Click "Enable" on Missing Recipient Trustlines Above</span>
                   ) : (
                     <span>Execute Split Payment</span>
                   )}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={connect}
-                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 text-white font-semibold py-3.5 rounded-xl cursor-pointer text-sm"
-                >
-                  <span>Connect Wallet to Execute</span>
                 </button>
               )}
             </form>
