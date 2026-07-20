@@ -25,7 +25,7 @@ interface WalletContextType {
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
-const CAST_ISSUER = process.env.NEXT_PUBLIC_CAST_ISSUER_ADDRESS || '';
+const CAST_ISSUER = process.env.NEXT_PUBLIC_CAST_ISSUER_ADDRESS || 'GB62STQZEV3ETLYGD34PIDOY4MILBYW5PUMHWGP435Y4RVUOTZUUD3FD';
 const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 const DEMO_PAYER_SECRET = 'SBLWM7DCPUJVPI4AR6TZF6EEB4OSIBWAYR3ISSKFAFJ5K7L3TFIPTMH4';
 const DEMO_PAYER_PUBLIC = 'GBREN2KJHTES3VN4FT6GROWIVSOAHWT7QH56IXKUDX7KXM4OYMM3BJBX';
@@ -60,31 +60,43 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Fetch balances from Horizon testnet
   const fetchBalances = useCallback(async (pubKey: string) => {
     try {
-      const server = new Horizon.Server(HORIZON_URL);
-      const accountInfo = await server.loadAccount(pubKey);
-      
-      // Native balance
-      const native = accountInfo.balances.find((b: any) => b.asset_type === 'native');
-      setXlmBalance(native ? parseFloat(native.balance).toFixed(4) : '0.0000');
+      let res = await fetch(`${HORIZON_URL}/accounts/${pubKey}`);
+      if (!res.ok) {
+        // Unfunded browser account: Fund via Friendbot
+        console.log(`Unfunded account ${pubKey} detected. Funding via Friendbot...`);
+        await fetch(`https://friendbot.stellar.org?addr=${pubKey}`);
+        res = await fetch(`${HORIZON_URL}/accounts/${pubKey}`);
+      }
 
-      // CAST balance and trustline
-      const cast = accountInfo.balances.find(
-        (b: any) => b.asset_code === 'CAST' && b.asset_issuer === CAST_ISSUER
-      );
-      
-      if (cast) {
-        setCastBalance(parseFloat(cast.balance).toFixed(4));
-        setHasCastTrustline(true);
+      if (res.ok) {
+        const accountInfo = await res.json();
+        
+        // Native XLM balance
+        const native = accountInfo.balances.find((b: any) => b.asset_type === 'native');
+        setXlmBalance(native ? parseFloat(native.balance).toFixed(4) : '0.0000');
+
+        // CAST balance and trustline
+        const cast = accountInfo.balances.find(
+          (b: any) => b.asset_code === 'CAST' && b.asset_issuer === CAST_ISSUER
+        );
+        
+        if (cast) {
+          setCastBalance(parseFloat(cast.balance).toFixed(4));
+          setHasCastTrustline(true);
+        } else {
+          setCastBalance('0.0000');
+          setHasCastTrustline(false);
+        }
       } else {
+        setXlmBalance('10000.0000');
         setCastBalance('0.0000');
         setHasCastTrustline(false);
       }
     } catch (err) {
       console.error('Error fetching balances:', err);
-      // Account might not be funded on testnet yet
       setXlmBalance('10000.0000');
-      setCastBalance('1000.0000');
-      setHasCastTrustline(true);
+      setCastBalance('0.0000');
+      setHasCastTrustline(false);
     }
   }, []);
 
@@ -236,51 +248,6 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     autoReconnect();
   }, [fetchBalances]);
 
-  // Add CAST trustline
-  const addCastTrustline = useCallback(async (): Promise<boolean> => {
-    if (!publicKey) return false;
-    setError(null);
-    try {
-      if (isDemoWallet) {
-        setHasCastTrustline(true);
-        setCastBalance('1000.0000');
-        return true;
-      }
-
-      const server = new Horizon.Server(HORIZON_URL);
-      const account = await server.loadAccount(publicKey);
-      
-      const { Asset, Operation, TimeoutInfinite } = require('@stellar/stellar-sdk');
-      const tx = new TransactionBuilder(account, {
-        fee: '1000',
-        networkPassphrase: 'Test SDF Network ; September 2015',
-      })
-        .addOperation(
-          Operation.changeTrust({
-            asset: new Asset('CAST', CAST_ISSUER),
-          })
-        )
-        .setTimeout(TimeoutInfinite)
-        .build();
-
-      const signedXdrRes: any = await signTransaction(tx.toXDR(), {
-        networkPassphrase: 'Test SDF Network ; September 2015',
-      });
-      const signedXdr = typeof signedXdrRes === 'string' ? signedXdrRes : signedXdrRes?.signedTxXdr || signedXdrRes;
-
-      const txResult = await server.submitTransaction(
-        TransactionBuilder.fromXDR(signedXdr, 'Test SDF Network ; September 2015')
-      );
-      
-      await fetchBalances(publicKey);
-      return true;
-    } catch (err: any) {
-      console.error('Error adding CAST trustline:', err);
-      setError(err?.message || 'Transaction rejected or failed in wallet.');
-      return false;
-    }
-  }, [publicKey, isDemoWallet, fetchBalances]);
-
   // Sign Transaction helper
   const signTx = useCallback(async (xdr: string): Promise<string> => {
     setError(null);
@@ -302,6 +269,77 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       throw err;
     }
   }, [isDemoWallet]);
+
+  // Add CAST trustline
+  const addCastTrustline = useCallback(async (): Promise<boolean> => {
+    if (!publicKey) return false;
+    setError(null);
+    try {
+      // 1. Try API setup endpoint first (works for all browser accounts & auto-funds new accounts via Friendbot)
+      try {
+        const res = await fetch('/api/setup-trustline', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ recipient: publicKey }),
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          await fetchBalances(publicKey);
+          return true;
+        }
+      } catch (apiErr) {
+        console.warn('API trustline setup fallback to wallet signing:', apiErr);
+      }
+
+      // 2. Wallet Signing Fallback via Freighter
+      let accRes = await fetch(`${HORIZON_URL}/accounts/${publicKey}`);
+      if (!accRes.ok) {
+        console.log('Account not found on testnet, funding via Friendbot...');
+        await fetch(`https://friendbot.stellar.org?addr=${publicKey}`);
+        accRes = await fetch(`${HORIZON_URL}/accounts/${publicKey}`);
+      }
+
+      if (!accRes.ok) {
+        throw new Error('Could not initialize account on Stellar Testnet.');
+      }
+
+      const accData = await accRes.json();
+      const { Account, TransactionBuilder, Asset, Operation, TimeoutInfinite } = await import('@stellar/stellar-sdk');
+      const userAccount = new Account(accData.account_id, accData.sequence);
+
+      const tx = new TransactionBuilder(userAccount, {
+        fee: '1000',
+        networkPassphrase: 'Test SDF Network ; September 2015',
+      })
+        .addOperation(
+          Operation.changeTrust({
+            asset: new Asset('CAST', CAST_ISSUER),
+          })
+        )
+        .setTimeout(TimeoutInfinite)
+        .build();
+
+      const signedXdr = await signTx(tx.toXDR());
+
+      const submitRes = await fetch(`${HORIZON_URL}/transactions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `tx=${encodeURIComponent(signedXdr)}`,
+      });
+
+      const submitJson = await submitRes.json();
+      if (!submitRes.ok || !submitJson.successful) {
+        throw new Error(submitJson?.title || 'Failed to submit changeTrust transaction to Stellar Testnet.');
+      }
+
+      await fetchBalances(publicKey);
+      return true;
+    } catch (err: any) {
+      console.error('Error adding CAST trustline:', err);
+      setError(err?.message || 'Transaction rejected or failed in wallet.');
+      return false;
+    }
+  }, [publicKey, fetchBalances, signTx]);
 
   // Auto-refresh balances every 10 seconds if connected
   useEffect(() => {
