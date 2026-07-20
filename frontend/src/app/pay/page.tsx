@@ -130,7 +130,7 @@ export default function PaySplit() {
     }
   };
 
-  // Calculate live preview breakdown
+  // Calculate live preview breakdown (Precise Math without float truncation)
   useEffect(() => {
     if (!splitConfig || !amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
       setPaymentPreview([]);
@@ -145,15 +145,15 @@ export default function PaySplit() {
     for (let i = 0; i < n; i++) {
       const pct = splitConfig.shares_bps[i] / 10000;
       if (i === n - 1) {
-        // Last recipient gets rounding dust
-        const share = payVal - totalAllocated;
+        // Last recipient gets exact remainder to prevent rounding drift
+        const share = Math.max(0, Math.round((payVal - totalAllocated) * 10000) / 10000);
         preview.push({
           recipient: splitConfig.recipients[i],
           percentage: pct * 100,
-          share: Math.max(0, share),
+          share: share,
         });
       } else {
-        const share = Math.floor((payVal * (splitConfig.shares_bps[i] / 10000)) * 10000) / 10000;
+        const share = Math.round((payVal * pct) * 10000) / 10000;
         totalAllocated += share;
         preview.push({
           recipient: splitConfig.recipients[i],
@@ -194,17 +194,6 @@ export default function PaySplit() {
       return;
     }
 
-    // Trustline pre-check for recipients
-    const missingRecipients = splitConfig.recipients.filter(r => recipientTrustlines[r] === false);
-    if (missingRecipients.length > 0) {
-      const missingAddr = missingRecipients[0];
-      setErrorMsg(
-        `Cannot execute payment: Recipient ${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)} is missing a CAST trustline. Please click "Enable" next to their address above to enable payouts.`
-      );
-      setLoading(false);
-      return;
-    }
-
     try {
       // Convert amount to 7 decimal places (Stellar Asset Contract unit)
       const rawAmount = BigInt(Math.round(parsedAmount * 10000000));
@@ -222,7 +211,7 @@ export default function PaySplit() {
       // 2. Prepare transaction
       const preparedTx = await prepareTx(publicKey, op);
 
-      // 3. Sign transaction on Freighter
+      // 3. Sign transaction on Freighter / Demo wallet
       const signedXdr = await signTx(preparedTx.toXDR());
 
       // 4. Submit to testnet RPC
@@ -243,7 +232,7 @@ export default function PaySplit() {
         const match = errString.match(/G[A-Z0-9]{55}/);
         const missingAddr = match ? match[0] : '';
         setErrorMsg(
-          `Payment failed: Recipient ${missingAddr ? `${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)}` : 'a recipient'} is missing a CAST trustline. On Stellar, recipients must hold a CAST trustline to receive payouts. Please click "Enable" next to their address above.`
+          `Payment failed: Recipient ${missingAddr ? `${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)}` : 'a recipient'} is missing a CAST trustline. On Stellar, recipients must hold a CAST trustline to receive payouts.`
         );
       } else {
         setErrorMsg(err?.message || 'Transaction execution failed on-chain.');
