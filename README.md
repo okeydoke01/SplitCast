@@ -1,7 +1,6 @@
 # SplitCast
 
 *   **Live Demo:** [https://splitcast.pages.dev](https://splitcast.pages.dev)
-*   **Repository:** [https://github.com/okeydoke01/SplitCast](https://github.com/okeydoke01/SplitCast)
 
 ---
 
