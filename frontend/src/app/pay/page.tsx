@@ -1,14 +1,16 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Navigation } from '@/components/Navigation';
 import { useWallet } from '@/context/WalletContext';
-import { Contract, xdr } from '@stellar/stellar-sdk';
+import { Contract } from '@stellar/stellar-sdk';
 import { toAddressScVal, toU64ScVal, toI128ScVal, prepareTx, submitTx, fetchSplitConfig, OnChainSplitConfig } from '@/utils/soroban';
-import { Loader2, Sparkles, CheckCircle2, AlertCircle, Search, CreditCard } from 'lucide-react';
+import { Loader2, Sparkles, CheckCircle2, AlertCircle, Search, CreditCard, ShieldCheck } from 'lucide-react';
 
 const SPLITTER_ADDRESS = process.env.NEXT_PUBLIC_SPLITTER_CONTRACT_ADDRESS || '';
 const CAST_TOKEN_ADDRESS = process.env.NEXT_PUBLIC_CAST_TOKEN_ADDRESS || '';
+const CAST_ISSUER = process.env.NEXT_PUBLIC_CAST_ISSUER_ADDRESS || 'GB62STQZEV3ETLYGD34PIDOY4MILBYW5PUMHWGP435Y4RVUOTZUUD3FD';
+const HORIZON_URL = 'https://horizon-testnet.stellar.org';
 
 export default function PaySplit() {
   const { publicKey, connected, connect, signTx, castBalance, refreshBalances } = useWallet();
@@ -17,6 +19,30 @@ export default function PaySplit() {
   const [searchId, setSearchId] = useState('');
   const [searching, setSearching] = useState(false);
   const [splitConfig, setSplitConfig] = useState<OnChainSplitConfig | null>(null);
+  const [recipientTrustlines, setRecipientTrustlines] = useState<Record<string, boolean>>({});
+  const [enablingTrustline, setEnablingTrustline] = useState<string | null>(null);
+
+  // Check recipient trustlines status on Stellar Testnet
+  const checkRecipientTrustlines = useCallback(async (recipients: string[]) => {
+    const statusMap: Record<string, boolean> = {};
+    for (const recipient of recipients) {
+      try {
+        const res = await fetch(`${HORIZON_URL}/accounts/${recipient}`);
+        if (res.ok) {
+          const data = await res.json();
+          const hasTrust = data.balances.some(
+            (b: any) => b.asset_code === 'CAST' && b.asset_issuer === CAST_ISSUER
+          );
+          statusMap[recipient] = hasTrust;
+        } else {
+          statusMap[recipient] = false;
+        }
+      } catch (e) {
+        statusMap[recipient] = false;
+      }
+    }
+    setRecipientTrustlines(statusMap);
+  }, []);
 
   // Auto pre-fill Split ID from URL query param (?id=X)
   useEffect(() => {
@@ -31,6 +57,7 @@ export default function PaySplit() {
             const config = await fetchSplitConfig(Number(queryId));
             if (config) {
               setSplitConfig(config);
+              await checkRecipientTrustlines(config.recipients);
             }
           } catch (e) {
             console.error('Error auto-resolving split ID:', e);
@@ -41,7 +68,7 @@ export default function PaySplit() {
         autoResolve();
       }
     }
-  }, []);
+  }, [checkRecipientTrustlines]);
   
   // Payment state
   const [amount, setAmount] = useState('');
@@ -69,6 +96,7 @@ export default function PaySplit() {
       const config = await fetchSplitConfig(Number(searchId));
       if (config) {
         setSplitConfig(config);
+        await checkRecipientTrustlines(config.recipients);
       } else {
         setErrorMsg(`Split configuration with ID #${searchId} was not found.`);
       }
@@ -76,6 +104,29 @@ export default function PaySplit() {
       setErrorMsg('Failed to query split registry.');
     } finally {
       setSearching(false);
+    }
+  };
+
+  // 1-Click enable recipient trustline
+  const handleEnableRecipientTrustline = async (recipient: string) => {
+    setEnablingTrustline(recipient);
+    setErrorMsg(null);
+    try {
+      const res = await fetch('/api/setup-trustline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to establish trustline for recipient.');
+      }
+      setRecipientTrustlines(prev => ({ ...prev, [recipient]: true }));
+    } catch (err: any) {
+      console.error('Error enabling recipient trustline:', err);
+      setErrorMsg(err?.message || 'Failed to enable recipient trustline.');
+    } finally {
+      setEnablingTrustline(null);
     }
   };
 
@@ -143,6 +194,17 @@ export default function PaySplit() {
       return;
     }
 
+    // Trustline pre-check for recipients
+    const missingRecipients = splitConfig.recipients.filter(r => recipientTrustlines[r] === false);
+    if (missingRecipients.length > 0) {
+      const missingAddr = missingRecipients[0];
+      setErrorMsg(
+        `Cannot execute payment: Recipient ${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)} is missing a CAST trustline. Please click "Enable" next to their address above to enable payouts.`
+      );
+      setLoading(false);
+      return;
+    }
+
     try {
       // Convert amount to 7 decimal places (Stellar Asset Contract unit)
       const rawAmount = BigInt(Math.round(parsedAmount * 10000000));
@@ -174,8 +236,15 @@ export default function PaySplit() {
       await refreshBalances();
     } catch (err: any) {
       console.error('Payment routing failure:', err);
-      if (err?.message?.includes('User rejected') || err?.message?.includes('rejected')) {
+      const errString = err?.message || JSON.stringify(err);
+      if (errString.includes('User rejected') || errString.includes('rejected')) {
         setErrorMsg('Transaction rejected in wallet. Inputs are preserved.');
+      } else if (errString.includes('trustline entry is missing for account') || errString.includes('Error(Contract, #13)')) {
+        const match = errString.match(/G[A-Z0-9]{55}/);
+        const missingAddr = match ? match[0] : '';
+        setErrorMsg(
+          `Payment failed: Recipient ${missingAddr ? `${missingAddr.slice(0, 6)}...${missingAddr.slice(-4)}` : 'a recipient'} is missing a CAST trustline. On Stellar, recipients must hold a CAST trustline to receive payouts. Please click "Enable" next to their address above.`
+        );
       } else {
         setErrorMsg(err?.message || 'Transaction execution failed on-chain.');
       }
@@ -277,15 +346,39 @@ export default function PaySplit() {
               </p>
             </div>
 
-            {/* Recipient breakdown list */}
+            {/* Recipient breakdown list with Trustline status */}
             <div className="bg-[#0d0c11] border border-border-subtle rounded-xl p-4">
-              <h4 className="text-xs font-semibold uppercase text-text-secondary tracking-wider mb-3">Router Allocations</h4>
+              <h4 className="text-xs font-semibold uppercase text-text-secondary tracking-wider mb-3">Router Allocations & Trustline Status</h4>
               <div className="space-y-2">
                 {splitConfig.recipients.map((recipient, i) => (
-                  <div key={i} className="flex justify-between items-center text-xs">
-                    <span className="font-mono text-text-secondary text-[11px] truncate max-w-[200px] sm:max-w-none">
-                      {recipient}
-                    </span>
+                  <div key={i} className="flex justify-between items-center text-xs py-1.5 border-b border-border-subtle/40 last:border-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-text-secondary text-[11px] truncate max-w-[150px] sm:max-w-xs">
+                        {recipient}
+                      </span>
+                      {recipientTrustlines[recipient] === true ? (
+                        <span className="text-[10px] bg-accent-success/10 text-accent-success border border-accent-success/30 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                          <CheckCircle2 className="w-2.5 h-2.5" /> Trustline Ready
+                        </span>
+                      ) : recipientTrustlines[recipient] === false ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] bg-accent-danger/10 text-accent-danger border border-accent-danger/30 px-2 py-0.5 rounded-full font-medium flex items-center gap-1">
+                            <AlertCircle className="w-2.5 h-2.5" /> Trustline Missing
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleEnableRecipientTrustline(recipient)}
+                            disabled={enablingTrustline === recipient}
+                            className="text-[10px] bg-accent-primary/20 hover:bg-accent-primary/30 text-accent-primary font-semibold px-2 py-0.5 rounded transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            {enablingTrustline === recipient ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <ShieldCheck className="w-2.5 h-2.5" />}
+                            Enable
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-text-muted">Checking status...</span>
+                      )}
+                    </div>
                     <span className="font-semibold text-text-primary">
                       {(splitConfig.shares_bps[i] / 100).toFixed(2)}%
                     </span>
@@ -316,7 +409,7 @@ export default function PaySplit() {
                 </div>
               </div>
 
-              {/* Live Preview Breakdown (Centerpiece UX Detail) */}
+              {/* Live Preview Breakdown */}
               {paymentPreview.length > 0 && (
                 <div className="bg-[#0d0c11]/80 border border-accent-primary/10 rounded-xl p-4 space-y-3">
                   <h4 className="text-xs font-bold uppercase text-accent-primary tracking-wider flex items-center gap-1.5">
