@@ -1,10 +1,28 @@
 # SplitCast
 
-![SplitCast CI](https://github.com/vidit/RiseInJ19/workflows/SplitCast%20CI/badge.svg)
+![SplitCast CI](https://github.com/okeydoke01/SplitCast/workflows/SplitCast%20CI/badge.svg)
 ![Stellar Testnet](https://img.shields.io/badge/Stellar-Testnet-blue)
 
 *   **Live Demo:** [https://splitcast.pages.dev](https://splitcast.pages.dev)
-*   **Demo Video (1–2 min):** `PENDING (Manual record required by user)`
+*   **Repository:** [https://github.com/okeydoke01/SplitCast](https://github.com/okeydoke01/SplitCast)
+
+---
+
+## Screenshots
+
+| Desktop Homepage | Mobile Responsive View |
+| :---: | :---: |
+| ![Desktop Homepage](./screenshots/desktop_homepage.png) | ![Mobile Responsive](./screenshots/mobile_responsive.png) |
+
+### Application Flow & Features
+
+| Create Split Router | Payment Fan-Out Gateway |
+| :---: | :---: |
+| ![Create Split](./screenshots/create_split.png) | ![Pay Split Gateway](./screenshots/pay_split.png) |
+
+| Atomic XLM <-> CAST Swap | Live Creator Dashboard |
+| :---: | :---: |
+| ![Atomic Swap](./screenshots/swap_page.png) | ![Creator Dashboard](./screenshots/dashboard.png) |
 
 ---
 
@@ -54,8 +72,8 @@ sequenceDiagram
 
 ## Tech Stack
 *   **Smart Contracts**: Rust, Soroban SDK (v22.0.1)
-*   **Frontend Framework**: Next.js 15 (App Router), React 19, TypeScript
-*   **Styling**: Tailwind CSS (v4), Vanilla CSS variables
+*   **Frontend Framework**: Next.js 16 (App Router), React 19, TypeScript
+*   **Styling**: Tailwind CSS, Vanilla CSS variables
 *   **Stellar Integration**: `@stellar/stellar-sdk` (v16.0.1) and `@stellar/freighter-api` (v6.0.1)
 *   **State & Polling**: SWR-like custom event indexer polling
 *   **Testing Suite**: Cargo test (Contracts), Vitest (Frontend pure math logic)
@@ -78,12 +96,12 @@ The payment `splitter` contract makes direct, synchronous cross-contract calls t
 
 ---
 
-## Wallet Connection
-SplitCast integrates with the **Freighter Wallet** browser extension to establish a secure link:
+## Wallet Connection & Persistence
+SplitCast integrates with the **Freighter Wallet** browser extension and a built-in **Testnet Demo Wallet**:
 1. Checks freighter presence using `isConnected()` from `@stellar/freighter-api`.
-2. Requests the user's active public key using `getAddress()`.
+2. Persists active wallet connection across page reloads in `localStorage`.
 3. Displays active native XLM balances and custom `CAST` token balances polled from Horizon Testnet.
-4. If a connected account has not yet established a trustline for `CAST`, a warning badge is displayed with a one-click button to execute `ChangeTrust` via Freighter.
+4. If a connected account has not yet established a trustline for `CAST`, a warning badge is displayed with a 1-click button to execute `ChangeTrust`.
 
 ---
 
@@ -112,15 +130,6 @@ SplitCast implements clear, distinct user-facing messaging for the following edg
 *   **Missing Trustline**: Reverts when transferring SAC tokens to accounts that haven't established trust. Frontend detects this and alerts the recipient.
 *   **Insufficient Balance**: Reverts if the payer does not have enough CAST tokens.
 *   **Signature Rejected**: Catch block detects Freighter UI reject actions, alerts the user, and preserves form inputs.
-
----
-
-## Screenshots
-*   *Mock locations — User should place real PNG captures here before final git commit:*
-    - Connect Wallet: `assets/connected_state.png`
-    - Create Split: `assets/create_split.png`
-    - Live Preview: `assets/live_preview.png`
-    - Dashboard Tickers: `assets/dashboard_tickers.png`
 
 ---
 
