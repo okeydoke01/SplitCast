@@ -1,8 +1,5 @@
 # SplitCast
 
-![SplitCast CI](https://github.com/okeydoke01/SplitCast/workflows/SplitCast%20CI/badge.svg)
-![Stellar Testnet](https://img.shields.io/badge/Stellar-Testnet-blue)
-
 *   **Live Demo:** [https://splitcast.pages.dev](https://splitcast.pages.dev)
 *   **Repository:** [https://github.com/okeydoke01/SplitCast](https://github.com/okeydoke01/SplitCast)
 
