@@ -137,6 +137,12 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsDemoWallet(false);
       setConnected(true);
       setError(null);
+      
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('splitcast_wallet_type', 'freighter');
+        localStorage.setItem('splitcast_wallet_address', pubKey);
+      }
+
       await fetchBalances(pubKey);
       setConnecting(false);
       return pubKey;
@@ -158,6 +164,12 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       setIsDemoWallet(true);
       setConnected(true);
       setError(null);
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('splitcast_wallet_type', 'demo');
+        localStorage.setItem('splitcast_wallet_address', pubKey);
+      }
+
       await fetchBalances(pubKey);
       setConnecting(false);
       return pubKey;
@@ -177,7 +189,52 @@ export const WalletProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     setCastBalance('0');
     setHasCastTrustline(false);
     setError(null);
+
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('splitcast_wallet_type');
+      localStorage.removeItem('splitcast_wallet_address');
+    }
   }, []);
+
+  // Auto-reconnect stored wallet on initial page load / refresh
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const autoReconnect = async () => {
+      const savedType = localStorage.getItem('splitcast_wallet_type');
+      const savedAddress = localStorage.getItem('splitcast_wallet_address');
+
+      if (!savedType) return;
+
+      if (savedType === 'demo') {
+        const pubKey = savedAddress || DEMO_PAYER_PUBLIC;
+        setPublicKey(pubKey);
+        setIsDemoWallet(true);
+        setConnected(true);
+        await fetchBalances(pubKey);
+      } else if (savedType === 'freighter') {
+        try {
+          let addressRes: any;
+          try {
+            addressRes = await getAddress();
+          } catch (e) {
+            addressRes = savedAddress;
+          }
+          const pubKey = typeof addressRes === 'string' ? addressRes : addressRes?.address || savedAddress;
+          if (pubKey) {
+            setPublicKey(pubKey);
+            setIsDemoWallet(false);
+            setConnected(true);
+            await fetchBalances(pubKey);
+          }
+        } catch (err) {
+          console.warn('Auto-reconnect Freighter failed:', err);
+        }
+      }
+    };
+
+    autoReconnect();
+  }, [fetchBalances]);
 
   // Add CAST trustline
   const addCastTrustline = useCallback(async (): Promise<boolean> => {
