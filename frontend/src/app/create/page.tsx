@@ -4,8 +4,10 @@ import React, { useState, useEffect } from 'react';
 import { Navigation } from '@/components/Navigation';
 import { useWallet } from '@/context/WalletContext';
 import { Contract, xdr } from '@stellar/stellar-sdk';
-import { toAddressScVal, toSymbolScVal, prepareTx, submitTx } from '@/utils/soroban';
-import { Plus, Trash2, Loader2, Sparkles, CheckCircle2, AlertCircle } from 'lucide-react';
+import { toAddressScVal, toSymbolScVal, prepareTx, submitTx, fetchSplitCounter } from '@/utils/soroban';
+import { Plus, Trash2, Loader2, Sparkles, CheckCircle2, AlertCircle, Copy, Check, CreditCard, ExternalLink } from 'lucide-react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 interface RecipientInput {
   address: string;
@@ -15,6 +17,7 @@ interface RecipientInput {
 const REGISTRY_ADDRESS = process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ADDRESS || '';
 
 export default function CreateSplit() {
+  const router = useRouter();
   const { publicKey, connected, connect, signTx } = useWallet();
   const [name, setName] = useState('');
   const [recipients, setRecipients] = useState<RecipientInput[]>([
@@ -22,9 +25,14 @@ export default function CreateSplit() {
   ]);
   const [totalPercentage, setTotalPercentage] = useState(0);
   
+  // Quick Split ID lookup state
+  const [quickSplitId, setQuickSplitId] = useState('');
+
   // Tx states
   const [loading, setLoading] = useState(false);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [createdSplitId, setCreatedSplitId] = useState<number | null>(null);
+  const [copied, setCopied] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // Recipient address format validator (starts with G or C, 56 characters)
@@ -57,6 +65,13 @@ export default function CreateSplit() {
     setRecipients(updated);
   };
 
+  const handleQuickPayJump = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (quickSplitId.trim() && !isNaN(Number(quickSplitId))) {
+      router.push(`/pay?id=${quickSplitId.trim()}`);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!connected || !publicKey) {
@@ -67,6 +82,7 @@ export default function CreateSplit() {
     setLoading(true);
     setErrorMsg(null);
     setTxHash(null);
+    setCreatedSplitId(null);
 
     // Form validation
     if (!name.trim()) {
@@ -127,7 +143,12 @@ export default function CreateSplit() {
       // 4. Submit to testnet RPC
       const hash = await submitTx(signedXdr);
 
+      // 5. Fetch assigned Split ID from contract counter
+      const newSplitId = await fetchSplitCounter();
+
       setTxHash(hash);
+      setCreatedSplitId(newSplitId > 0 ? newSplitId : null);
+      
       // Reset form
       setName('');
       setRecipients([{ address: '', percentage: '' }]);
@@ -160,29 +181,96 @@ export default function CreateSplit() {
           </div>
 
           <h2 className="text-2xl sm:text-3xl font-bold font-space-grotesk text-white mb-2">Build a Split</h2>
-          <p className="text-sm text-text-secondary mb-8">
+          <p className="text-sm text-text-secondary mb-6">
             Define recipients and configure their percentage cuts. The total must equal exactly 100% to submit.
           </p>
 
-          {/* Success message */}
-          {txHash && (
-            <div className="mb-6 p-4 rounded-xl bg-accent-success/10 border border-accent-success/30 flex items-start gap-3">
-              <CheckCircle2 className="w-5 h-5 text-accent-success shrink-0 mt-0.5" />
+          {/* Quick Split ID Pay Jump */}
+          <div className="mb-8 p-4 rounded-xl bg-[#0d0c11] border border-border-subtle flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-lg bg-accent-primary/10 text-accent-primary shrink-0">
+                <CreditCard className="w-4 h-4" />
+              </div>
               <div>
-                <h4 className="font-bold text-white font-space-grotesk text-sm">Split Created Successfully!</h4>
-                <p className="text-xs text-text-secondary mt-1">
-                  Your split configuration has been registered on Stellar Testnet.
-                </p>
-                <div className="mt-3 flex items-center gap-4">
-                  <a
-                    href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-accent-secondary hover:underline font-semibold"
-                  >
-                    View on Stellar Expert
-                  </a>
+                <h4 className="text-xs font-bold text-white">Have an existing Split ID?</h4>
+                <p className="text-[11px] text-text-secondary">Enter a Split ID to open it in the Pay Gateway directly.</p>
+              </div>
+            </div>
+            <form onSubmit={handleQuickPayJump} className="flex gap-2 w-full sm:w-auto">
+              <input
+                type="number"
+                min="1"
+                value={quickSplitId}
+                onChange={(e) => setQuickSplitId(e.target.value)}
+                placeholder="Split ID (e.g. 3)"
+                className="w-full sm:w-32 bg-bg-surface border border-border-subtle px-3 py-1.5 rounded-lg text-xs font-mono text-white focus:outline-none focus:border-accent-primary"
+              />
+              <button
+                type="submit"
+                className="px-3.5 py-1.5 bg-accent-primary text-white font-semibold text-xs rounded-lg hover:opacity-90 transition-opacity cursor-pointer shrink-0"
+              >
+                Open in Pay &rarr;
+              </button>
+            </form>
+          </div>
+
+          {/* Success message with assigned Split ID */}
+          {txHash && (
+            <div className="mb-6 p-5 rounded-2xl bg-accent-success/10 border border-accent-success/30 space-y-4">
+              <div className="flex items-start gap-3">
+                <CheckCircle2 className="w-6 h-6 text-accent-success shrink-0 mt-0.5" />
+                <div>
+                  <h4 className="font-bold text-white font-space-grotesk text-base">
+                    Split {createdSplitId ? `#${createdSplitId}` : ''} Created Successfully!
+                  </h4>
+                  <p className="text-xs text-text-secondary mt-1">
+                    Your split configuration has been registered on Stellar Testnet.
+                  </p>
                 </div>
+              </div>
+
+              {createdSplitId && (
+                <div className="bg-[#0d0c11] border border-accent-success/20 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+                  <div>
+                    <span className="text-[10px] text-text-secondary uppercase font-bold tracking-wider">Your Assigned Split ID</span>
+                    <div className="flex items-center gap-2 mt-1">
+                      <span className="text-2xl font-bold font-mono text-accent-success">#{createdSplitId}</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(createdSplitId.toString());
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="px-2.5 py-1 text-xs bg-accent-success/20 hover:bg-accent-success/30 text-accent-success rounded-lg font-medium transition-colors cursor-pointer flex items-center gap-1"
+                      >
+                        {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        <span>{copied ? 'Copied!' : 'Copy Split ID'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 w-full sm:w-auto">
+                    <Link
+                      href={`/pay?id=${createdSplitId}`}
+                      className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl bg-accent-success text-black font-bold text-xs hover:bg-accent-success/90 transition-colors shadow-lg shadow-accent-success/20"
+                    >
+                      <CreditCard className="w-3.5 h-3.5" />
+                      <span>Pay into Split #{createdSplitId} &rarr;</span>
+                    </Link>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center gap-4 text-xs">
+                <a
+                  href={`https://stellar.expert/explorer/testnet/tx/${txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent-secondary hover:underline font-semibold flex items-center gap-1"
+                >
+                  View Transaction on Stellar Expert <ExternalLink className="w-3 h-3" />
+                </a>
               </div>
             </div>
           )}
@@ -208,106 +296,88 @@ export default function CreateSplit() {
                 id="split-name"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Collaborator_Pool"
+                placeholder="e.g. Band_Royalties_Q3"
                 className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm text-white placeholder-text-secondary transition-all outline-none"
                 disabled={loading}
               />
             </div>
 
-            {/* Recipients List */}
+            {/* Recipients Section */}
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-text-primary">Recipients</span>
-                <button
-                  type="button"
-                  onClick={handleAddRecipient}
-                  disabled={loading}
-                  className="flex items-center gap-1.5 text-xs font-semibold text-accent-secondary hover:underline cursor-pointer"
-                >
-                  <Plus className="w-4 h-4" /> Add Recipient
-                </button>
+              <div className="flex justify-between items-center">
+                <label className="block text-sm font-semibold text-text-primary">
+                  Recipients & Percentage Cuts
+                </label>
+                <span className={`text-xs font-mono font-semibold ${totalPercentage === 100 ? 'text-accent-success' : 'text-accent-warning'}`}>
+                  Total: {totalPercentage.toFixed(1)}% / 100%
+                </span>
               </div>
 
               {recipients.map((recipient, index) => (
-                <div key={index} className="flex flex-col sm:flex-row gap-3 items-start sm:items-center">
-                  <div className="flex-1 w-full">
+                <div key={index} className="flex gap-3 items-center">
+                  <div className="flex-1">
                     <input
                       type="text"
                       value={recipient.address}
                       onChange={(e) => handleInputChange(index, 'address', e.target.value)}
-                      placeholder="Stellar public address (G... / C...)"
-                      className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-sm text-white placeholder-text-secondary transition-all outline-none font-mono"
+                      placeholder="Stellar Public Key (starts with G or C...)"
+                      className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl px-4 py-3 text-xs sm:text-sm font-mono text-white placeholder-text-secondary transition-all outline-none"
                       disabled={loading}
                     />
                   </div>
-                  <div className="flex items-center gap-2 w-full sm:w-32">
-                    <div className="relative flex-1">
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        step="0.01"
-                        value={recipient.percentage}
-                        onChange={(e) => handleInputChange(index, 'percentage', e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl pl-4 pr-8 py-3 text-sm text-white placeholder-text-secondary transition-all outline-none font-variant-numeric-tabular-nums"
-                        disabled={loading}
-                      />
-                      <span className="absolute right-3 top-3.5 text-xs text-text-secondary">%</span>
-                    </div>
-
-                    {recipients.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveRecipient(index)}
-                        disabled={loading}
-                        className="p-3 rounded-xl border border-border-subtle hover:border-accent-danger/30 hover:bg-accent-danger/10 text-text-secondary hover:text-accent-danger transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+                  <div className="w-24 sm:w-28 relative">
+                    <input
+                      type="number"
+                      step="any"
+                      min="0.1"
+                      max="100"
+                      value={recipient.percentage}
+                      onChange={(e) => handleInputChange(index, 'percentage', e.target.value)}
+                      placeholder="0"
+                      className="w-full bg-[#0d0c11] border border-border-subtle hover:border-accent-primary/30 focus:border-accent-primary focus:ring-1 focus:ring-accent-primary rounded-xl pl-4 pr-7 py-3 text-sm font-mono text-white placeholder-text-secondary transition-all outline-none"
+                      disabled={loading}
+                    />
+                    <span className="absolute right-3 top-3.5 text-xs text-text-secondary">%</span>
                   </div>
+                  {recipients.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRecipient(index)}
+                      className="p-3 text-text-secondary hover:text-accent-danger hover:bg-accent-danger/10 rounded-xl transition-colors cursor-pointer"
+                      disabled={loading}
+                      title="Remove Recipient"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
               ))}
-            </div>
 
-            {/* Running Total Tracker */}
-            <div className="border-t border-border-subtle pt-6 flex items-center justify-between">
-              <div>
-                <p className="text-xs text-text-secondary">Running Allocation Total</p>
-                <p className={`text-xl font-bold font-space-grotesk mt-1 ${
-                  totalPercentage === 100 ? 'text-accent-success' : 'text-accent-danger'
-                }`}>
-                  {totalPercentage.toFixed(2)}%
-                </p>
-              </div>
-
-              {totalPercentage !== 100 && (
-                <div className="text-right">
-                  <p className="text-[10px] text-accent-danger font-medium">
-                    {totalPercentage < 100 
-                      ? `Missing ${(100 - totalPercentage).toFixed(2)}%` 
-                      : `Exceeds by ${(totalPercentage - 100).toFixed(2)}%`}
-                  </p>
-                  <p className="text-[10px] text-text-secondary">Must equal exactly 100%</p>
-                </div>
-              )}
+              <button
+                type="button"
+                onClick={handleAddRecipient}
+                disabled={loading || recipients.length >= 10}
+                className="inline-flex items-center gap-2 text-xs font-semibold text-accent-primary hover:text-accent-primary-end transition-colors cursor-pointer pt-2"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Add Recipient (Max 10)</span>
+              </button>
             </div>
 
             {/* Submit Button */}
             {connected ? (
               <button
                 type="submit"
-                disabled={!isFormValid || loading}
+                disabled={loading || !isFormValid}
                 className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 disabled:opacity-30 disabled:pointer-events-none text-white font-semibold py-3.5 rounded-xl cursor-pointer shadow-lg shadow-accent-primary/10 text-sm tracking-wide transition-opacity"
               >
                 {loading ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Preparing & Deploying Split...</span>
+                    <span>Deploying Split to Soroban...</span>
                   </>
                 ) : (
-                  <span>Create Split Router</span>
+                  <span>Register Split Config</span>
                 )}
               </button>
             ) : (
@@ -316,7 +386,7 @@ export default function CreateSplit() {
                 onClick={connect}
                 className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-accent-primary to-accent-primary-end hover:opacity-90 text-white font-semibold py-3.5 rounded-xl cursor-pointer text-sm"
               >
-                <span>Connect Wallet to Submit</span>
+                <span>Connect Wallet to Create</span>
               </button>
             )}
           </form>

@@ -140,6 +140,39 @@ export const fetchSplitConfig = async (splitId: number): Promise<OnChainSplitCon
   }
 };
 
+export const fetchSplitCounter = async (): Promise<number> => {
+  const server = getRpcServer();
+  const contract = new Contract(process.env.NEXT_PUBLIC_REGISTRY_CONTRACT_ADDRESS || '');
+  const dummyAccount = 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF';
+
+  try {
+    const op = contract.call('get_split_count');
+
+    const { Account } = require('@stellar/stellar-sdk');
+    const mockAccount = new Account(dummyAccount, '0');
+
+    const tx = new TransactionBuilder(mockAccount, {
+      fee: '100',
+      networkPassphrase: NETWORK_PASSPHRASE,
+    })
+      .addOperation(op)
+      .setTimeout(TimeoutInfinite)
+      .build();
+
+    const sim = await server.simulateTransaction(tx);
+
+    if (rpc.Api.isSimulationSuccess(sim) && sim.result) {
+      const retval = sim.result.retval;
+      const nativeVal = scValToNative(retval);
+      return Number(nativeVal);
+    }
+    return 0;
+  } catch (err) {
+    console.error('Error fetching split count:', err);
+    return 0;
+  }
+};
+
 export interface EarnedEvent {
   type: 'earned';
   ledger: number;
